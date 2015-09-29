@@ -31,8 +31,10 @@ import retrying
 import sys
 import time
 
-from neutronclient.neutron import client
 from neutronclient.common.exceptions import NeutronException
+from neutronclient.neutron import client as nclient
+import keystoneclient.v2_0.client as kclientv2
+import keystoneclient.v3.client as kclientv3
 
 
 LOG = logging.getLogger('neutron-ha-tool')
@@ -43,14 +45,19 @@ TAKEOVER_DELAY = int(random.random() * 30 + 30)
 OS_PASSWORD_FILE = '/etc/neutron/os_password'
 
 
+IDENTITY_API_VERSIONS = {
+    '2.0': kclientv2,
+    '2': kclientv2,
+    '3': kclientv3
+}
+
+
 def parse_args():
     # ensure environment has necessary items to authenticate
-    for key in ['OS_TENANT_NAME', 'OS_USERNAME',
-                'OS_AUTH_URL', 'OS_REGION_NAME']:
+    for key in ['OS_USERNAME', 'OS_PASSWORD', 'OS_AUTH_URL',
+                'OS_ENDPOINT_TYPE']:
         if key not in os.environ.keys():
-            # We don't have a logger set up yet
-            sys.stderr.write("Your environment is missing '%s'\n" % key)
-            sys.exit(1)
+            raise SystemExit("Your environment is missing '%s'")
 
     ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('-d', '--debug', action='store_true',
@@ -160,15 +167,38 @@ def run(args):
                   "or from %s; aborting!" % OS_PASSWORD_FILE)
         sys.exit(1)
 
-    # instantiate client
-    qclient = client.Client('2.0', auth_url=os.environ['OS_AUTH_URL'],
-                            username=os.environ['OS_USERNAME'],
-                            tenant_name=os.environ['OS_TENANT_NAME'],
-                            password=os_password,
-                            endpoint_type='internalURL',
-                            region_name=os.environ['OS_REGION_NAME'],
-                            insecure=args.insecure,
-                            ca_cert=ca)
+    auth_version = os.getenv('OS_AUTH_VERSION', None)
+    if not auth_version:
+        auth_version = os.getenv('OS_IDENTITY_API_VERSION', None)
+        if not auth_version:
+            auth_version = 3
+
+    kclient = IDENTITY_API_VERSIONS[auth_version]
+    kclient_kwargs = dict()
+    kclient_kwargs['username'] = os.environ['OS_USERNAME']
+    kclient_kwargs['password'] = os.environ['OS_PASSWORD']
+    kclient_kwargs['insecure'] = args.insecure
+    kclient_kwargs['ca_cert'] = ca
+    kclient_kwargs['auth_url'] = os.environ['OS_AUTH_URL']
+
+    tenant_name = os.getenv('OS_TENANT_NAME')
+    if tenant_name and auth_version != 3:
+        kclient_kwargs['tenant_name'] = tenant_name
+    else:
+        kclient_kwargs['project_name'] = os.environ['OS_PROJECT_NAME']
+
+    # Instantiate Keystone client
+    keystone = kclient.Client(**kclient_kwargs)
+
+    # Instantiate Neutron client
+    qclient = nclient.Client(
+        '2.0',
+        endpoint_url=keystone.service_catalog.url_for(
+            service_type='network',
+            endpoint_type=os.environ['OS_ENDPOINT_TYPE']
+        ),
+        token=keystone.get_token(keystone.session)
+    )
 
     # set json return type
     qclient.format = 'json'
@@ -594,7 +624,8 @@ def list_routers(qclient):
 
     resp = qclient.list_routers()
     LOG.debug("list_routers: %s", resp)
-    return resp['routers']
+    # Filter routers to not include HA routers
+    return [i for i in resp['routers'] if not i.get('ha') == True]
 
 
 def list_routers_on_l3_agent(qclient, agent_id):
@@ -606,7 +637,7 @@ def list_routers_on_l3_agent(qclient, agent_id):
 
     resp = qclient.list_routers_on_l3_agent(agent_id)
     LOG.debug("list_routers_on_l3_agent: %s", resp)
-    return [r['id'] for r in resp['routers']]
+    return [r['id'] for r in resp['routers'] if not r.get('ha') == True]
 
 
 def list_agents(qclient, agent_type=None):
