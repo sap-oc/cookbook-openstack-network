@@ -286,8 +286,9 @@ def l3_agent_migrate(qclient, noop=False, now=False):
         return
 
     if len(agent_alive_list) < 1:
-        LOG.exception("There are no l3 agents alive to migrate "
-                      "routers onto")
+        LOG.error("There are no l3 agents alive to migrate routers onto - "
+                  "aborting!")
+        return
 
     timeout = 0
     if not now:
@@ -347,8 +348,8 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
     migration_count = 0
 
     if len(target_list) < 1:
-        LOG.exception("There are no l3 agents alive to migrate "
-                      "routers onto")
+        LOG.error("There are no l3 agents alive to migrate routers onto")
+        return
 
     agent_to_exclude = None
     for agent in agent_list:
