@@ -40,7 +40,9 @@ def parse_args():
     for key in ['OS_TENANT_NAME', 'OS_USERNAME',
                 'OS_AUTH_URL', 'OS_REGION_NAME']:
         if key not in os.environ.keys():
-            LOG.exception("Your environment is missing '%s'")
+            # We don't have a logger set up yet
+            sys.stderr.write("Your environment is missing '%s'\n" % key)
+            sys.exit(1)
 
     ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('-d', '--debug', action='store_true',
