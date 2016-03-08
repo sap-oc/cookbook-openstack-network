@@ -238,25 +238,27 @@ def l3_agent_check(qclient):
     LOG.info("There are %s offline L3 agents and %s online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
-    if len(agent_dead_list) > 0:
-        for agent_id in agent_dead_list:
-            LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
-            router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+    if len(agent_dead_list) == 0:
+        return
 
-            for router_id in router_id_list:
-                try:
-                    target_id = random.choice(agent_alive_list)
-                except IndexError:
-                    LOG.warn("There are no l3 agents alive we could "
-                             "migrate routers onto.")
-                    target_id = None
+    for agent_id in agent_dead_list:
+        LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
+        router_id_list = list_routers_on_l3_agent(qclient, agent_id)
 
-                migration_count += 1
-                LOG.warn("Would like to migrate router=%s to agent=%s",
-                         router_id, target_id)
+        for router_id in router_id_list:
+            try:
+                target_id = random.choice(agent_alive_list)
+            except IndexError:
+                LOG.warn("There are no l3 agents alive we could "
+                         "migrate routers onto.")
+                target_id = None
 
-        if migration_count > 0:
-            sys.exit(2)
+            migration_count += 1
+            LOG.warn("Would like to migrate router=%s to agent=%s",
+                     router_id, target_id)
+
+    if migration_count > 0:
+        sys.exit(2)
 
 
 def l3_agent_migrate(qclient, noop=False, now=False):
@@ -280,50 +282,52 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     LOG.info("There are %s offline L3 agents and %s online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
-    if len(agent_dead_list) > 0:
-        if len(agent_alive_list) < 1:
-            LOG.exception("There are no l3 agents alive to migrate "
-                          "routers onto")
+    if len(agent_dead_list) == 0:
+        return
 
-        timeout = 0
-        if not now:
-            while timeout < TAKEOVER_DELAY:
+    if len(agent_alive_list) < 1:
+        LOG.exception("There are no l3 agents alive to migrate "
+                      "routers onto")
 
-                agent_list_new = list_agents(qclient)
-                agent_dead_list_new = agent_dead_id_list(agent_list_new,
-                                                         'L3 agent')
-                if len(agent_dead_list_new) < len(agent_dead_list):
-                    LOG.info("Skipping router failover since an agent came "
-                             "online while ensuring agents offline for %s "
-                             "seconds", TAKEOVER_DELAY)
-                    sys.exit(0)
+    timeout = 0
+    if not now:
+        while timeout < TAKEOVER_DELAY:
 
-                LOG.info("Agent found offline for seconds=%s but waiting "
-                         "seconds=%s before migration",
-                         timeout, TAKEOVER_DELAY)
-                timeout += 1
-                time.sleep(1)
+            agent_list_new = list_agents(qclient)
+            agent_dead_list_new = agent_dead_id_list(agent_list_new,
+                                                     'L3 agent')
+            if len(agent_dead_list_new) < len(agent_dead_list):
+                LOG.info("Skipping router failover since an agent came "
+                         "online while ensuring agents offline for %s "
+                         "seconds", TAKEOVER_DELAY)
+                sys.exit(0)
 
-        for agent_id in agent_dead_list:
-            LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
-            router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+            LOG.info("Agent found offline for seconds=%s but waiting "
+                     "seconds=%s before migration",
+                     timeout, TAKEOVER_DELAY)
+            timeout += 1
+            time.sleep(1)
 
-            for router_id in router_id_list:
+    for agent_id in agent_dead_list:
+        LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
+        router_id_list = list_routers_on_l3_agent(qclient, agent_id)
 
-                target_id = random.choice(agent_alive_list)
-                LOG.info("Migrating router=%s to agent=%s",
-                         router_id, target_id)
+        for router_id in router_id_list:
 
-                try:
-                    if not noop:
-                        migrate_router(qclient, router_id, agent_id, target_id)
-                        migration_count += 1
-                except:
-                    LOG.exception("There was an error migrating a router")
-                    continue
+            target_id = random.choice(agent_alive_list)
+            LOG.info("Migrating router=%s to agent=%s",
+                     router_id, target_id)
 
-        LOG.info("%s routers required migration from offline L3 agents",
-                 migration_count)
+            try:
+                if not noop:
+                    migrate_router(qclient, router_id, agent_id, target_id)
+                    migration_count += 1
+            except:
+                LOG.exception("There was an error migrating a router")
+                continue
+
+    LOG.info("%s routers required migration from offline L3 agents",
+             migration_count)
 
 
 def l3_agent_evacuate(qclient, excludeagent, noop=False):
@@ -397,19 +401,20 @@ def replicate_dhcp(qclient, noop=False):
             qclient.list_networks_on_dhcp_agent(dhcp_agent_id)['networks']
         network_id_on_agent = [n['id'] for n in networks_on_agent]
         for network_id in network_id_list:
-            if network_id not in network_id_on_agent:
-                try:
-                    dhcp_body = {'network_id': network_id}
-                    if not noop:
-                        qclient.add_network_to_dhcp_agent(dhcp_agent_id,
-                                                          dhcp_body)
-                    LOG.info("Added missing network=%s to dhcp agent=%s",
-                             network_id, dhcp_agent_id)
-                    added += 1
-                except:
-                    LOG.exception("Failed to add network_id=%s to"
-                                  "dhcp_agent=%s", network_id, dhcp_agent_id)
-                    continue
+            if network_id in network_id_on_agent:
+                continue
+            try:
+                dhcp_body = {'network_id': network_id}
+                if not noop:
+                    qclient.add_network_to_dhcp_agent(dhcp_agent_id,
+                                                      dhcp_body)
+                LOG.info("Added missing network=%s to dhcp agent=%s",
+                         network_id, dhcp_agent_id)
+                added += 1
+            except:
+                LOG.exception("Failed to add network_id=%s to"
+                              "dhcp_agent=%s", network_id, dhcp_agent_id)
+                continue
 
     LOG.info("Added %s networks to DHCP agents", added)
 
