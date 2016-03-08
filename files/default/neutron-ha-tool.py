@@ -358,7 +358,8 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
             break
 
     if not agent_to_exclude:
-        LOG.exception("Could not locate agent to evacuate")
+        LOG.error("Could not locate agent to evacuate; aborting!")
+        return
 
     agent_id = agent_to_exclude['id']
     LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
