@@ -310,6 +310,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     for agent_id in agent_dead_list:
         LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
         router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+        migration_count += len(router_id_list)
 
         for router_id in router_id_list:
             target_id = random.choice(agent_alive_list)
@@ -319,7 +320,6 @@ def l3_agent_migrate(qclient, noop=False, now=False):
             try:
                 if not noop:
                     migrate_router(qclient, router_id, agent_id, target_id)
-                    migration_count += 1
             except:
                 LOG.exception("There was an error migrating a router")
                 continue
@@ -361,6 +361,7 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
     agent_id = agent_to_exclude['id']
     LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
     router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+    migration_count += len(router_id_list)
 
     for router_id in router_id_list:
         target_id = random.choice(target_list)
@@ -373,7 +374,6 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
         except Exception:
             LOG.exception("There was an error migrating a router")
             continue
-        migration_count += 1
 
     LOG.info("%s routers required migration from L3 agent %s",
              migration_count, excludeagent)
