@@ -423,8 +423,9 @@ def migrate_router(qclient, router_id, agent_id, target_id):
     # subsequent failure during the add or remove process so we must check to
     # ensure the router has been added or removed
 
-    # remove the router from the dead agent
+    # Remove the router from the original agent
     qclient.remove_router_from_l3_agent(agent_id, router_id)
+    LOG.debug("Removed router from agent=%s" % agent_id)
 
     # ensure it is removed or log an error
     if router_id in list_routers_on_l3_agent(qclient, agent_id):
