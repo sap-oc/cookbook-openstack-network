@@ -416,7 +416,7 @@ def replicate_dhcp(qclient, noop=False):
 
 def migrate_router(qclient, router_id, agent_id, target_id):
     """
-    Returns nothing, and raises on exception
+    Returns nothing, and raises exceptions on errors.
 
     :param qclient: A neutronclient
     :param router_id: The id of the router to migrate
@@ -433,8 +433,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id in list_routers_on_l3_agent(qclient, agent_id):
-        LOG.exception("Failed to remove router_id=%s from agent_id=%s",
-                      router_id, agent_id)
+        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s",
+                           router_id, agent_id)
 
     # add the router id to a live agent
     router_body = {'router_id': router_id}
@@ -442,8 +442,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id not in list_routers_on_l3_agent(qclient, target_id):
-        LOG.exception("Failed to add router_id=%s from agent_id=%s",
-                      router_id, agent_id)
+        raise RuntimeError("Failed to add router_id=%s from agent_id=%s",
+                           router_id, agent_id)
 
 
 def list_networks(qclient):
