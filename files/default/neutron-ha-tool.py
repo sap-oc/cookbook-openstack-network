@@ -37,7 +37,7 @@ TAKEOVER_DELAY = int(random.random()*30+30)
 def parse_args():
 
     # ensure environment has necessary items to authenticate
-    for key in ['OS_TENANT_NAME', 'OS_USERNAME', 'OS_PASSWORD',
+    for key in ['OS_TENANT_NAME', 'OS_USERNAME',
                 'OS_AUTH_URL', 'OS_REGION_NAME']:
         if key not in os.environ.keys():
             LOG.exception("Your environment is missing '%s'")
@@ -89,11 +89,19 @@ def run(args):
     except KeyError:
         ca = None
 
+    # Allow environment to override config file.  This retains
+    # backwards-compatibility and follows conventional precedence.
+    if os.getenv('OS_PASSWORD'):
+        os_password = os.environ['OS_PASSWORD']
+    else:
+        with open('/etc/neutron/os_password') as f:
+            os_password = f.readline()
+
     # instantiate client
     qclient = client.Client('2.0', auth_url=os.environ['OS_AUTH_URL'],
                             username=os.environ['OS_USERNAME'],
                             tenant_name=os.environ['OS_TENANT_NAME'],
-                            password=os.environ['OS_PASSWORD'],
+                            password=os_password,
                             endpoint_type='internalURL',
                             region_name=os.environ['OS_REGION_NAME'],
                             insecure=args.insecure,
