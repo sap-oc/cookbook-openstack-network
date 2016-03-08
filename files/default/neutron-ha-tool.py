@@ -603,9 +603,9 @@ def target_agent_list(agent_list, agent_type, excludeagent):
 
     """
     return [agent['id'] for agent in agent_list
-            if agent['agent_type'] == agent_type
-            and agent['alive']
-            and agent['host'] != excludeagent]
+            if agent['agent_type'] == agent_type and
+            agent['alive'] and
+            agent['host'] != excludeagent]
 
 
 def agent_dead_id_list(agent_list, agent_type):
