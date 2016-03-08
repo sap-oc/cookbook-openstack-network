@@ -35,7 +35,6 @@ TAKEOVER_DELAY = int(random.random()*30+30)
 
 
 def parse_args():
-
     # ensure environment has necessary items to authenticate
     for key in ['OS_TENANT_NAME', 'OS_USERNAME',
                 'OS_AUTH_URL', 'OS_REGION_NAME']:
@@ -293,7 +292,6 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     timeout = 0
     if not now:
         while timeout < TAKEOVER_DELAY:
-
             agent_list_new = list_agents(qclient)
             agent_dead_list_new = agent_dead_id_list(agent_list_new,
                                                      'L3 agent')
@@ -314,7 +312,6 @@ def l3_agent_migrate(qclient, noop=False, now=False):
         router_id_list = list_routers_on_l3_agent(qclient, agent_id)
 
         for router_id in router_id_list:
-
             target_id = random.choice(agent_alive_list)
             LOG.info("Migrating router=%s to agent=%s",
                      router_id, target_id)
