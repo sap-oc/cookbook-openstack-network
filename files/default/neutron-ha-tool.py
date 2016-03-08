@@ -205,8 +205,6 @@ def l3_agent_rebalance(qclient, noop=False):
             if low_agent_router_count >= hgh_agent_router_count:
                 break
             else:
-                LOG.info("Migrating router=%s from agent=%s to agent=%s",
-                         router_id, hgh_agent_id, low_agent_id)
                 try:
                     if not noop:
                         migrate_router(qclient, router_id, hgh_agent_id,
@@ -314,8 +312,6 @@ def l3_agent_migrate(qclient, noop=False, now=False):
 
         for router_id in router_id_list:
             target_id = random.choice(agent_alive_list)
-            LOG.info("Migrating router=%s to agent=%s",
-                     router_id, target_id)
 
             try:
                 if not noop:
@@ -365,8 +361,6 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
 
     for router_id in router_id_list:
         target_id = random.choice(target_list)
-        LOG.info("Migrating router=%s to agent=%s",
-                 router_id, target_id)
 
         try:
             if not noop:
@@ -427,6 +421,9 @@ def migrate_router(qclient, router_id, agent_id, target_id):
     :param agent_id: The id of the l3 agent to migrate from
     :param target_id: The id of the l3 agent to migrate to
     """
+
+    LOG.info("Migrating router=%s from agent=%s to agent=%s",
+             router_id, agent_id, target_id)
 
     # N.B. The neutron API will return "success" even when there is a
     # subsequent failure during the add or remove process so we must check to
