@@ -32,6 +32,7 @@ LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 LOG_DATE = '%m-%d %H:%M'
 DESCRIPTION = "neutron High Availability Tool"
 TAKEOVER_DELAY = int(random.random()*30+30)
+OS_PASSWORD_FILE = '/etc/neutron/os_password'
 
 
 def parse_args():
@@ -94,9 +95,13 @@ def run(args):
     # backwards-compatibility and follows conventional precedence.
     if os.getenv('OS_PASSWORD'):
         os_password = os.environ['OS_PASSWORD']
-    else:
-        with open('/etc/neutron/os_password') as f:
+    elif os.path.exists(OS_PASSWORD_FILE):
+        with open(OS_PASSWORD_FILE) as f:
             os_password = f.readline()
+    else:
+        LOG.fatal("Couldn't retrieve password from $OS_PASSWORD environment "
+                  "or from %s; aborting!" % OS_PASSWORD_FILE)
+        sys.exit(1)
 
     # instantiate client
     qclient = client.Client('2.0', auth_url=os.environ['OS_AUTH_URL'],
