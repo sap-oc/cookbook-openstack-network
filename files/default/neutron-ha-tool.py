@@ -21,10 +21,13 @@ import os
 import sys
 import argparse
 import random
+import retrying
 import time
+
 from logging.handlers import SysLogHandler
 from collections import OrderedDict
 from neutronclient.neutron import client
+from neutronclient.common.exceptions import NeutronException
 
 
 LOG = logging.getLogger('neutron-ha-tool')
@@ -63,6 +66,13 @@ def parse_args():
                     help='Replicate DHCP configuration to all agents')
     ap.add_argument('--now', action='store_true', default=False,
                     help='Migrate Routers immediately without a delay.')
+    ap.add_argument('-r', '--retry', action='store_true', default=False,
+                    help='Retry neutronclient exceptions with exponential '
+                         'backoff')
+    ap.add_argument('--retry-max-interval', action='store', type=int,
+                    default=10000, metavar='MS',
+                    help='Maximum retry interval in milliseconds at which to '
+                    'cap back-off')
     ap.add_argument('--insecure', action='store_true', default=False,
                     help='Explicitly allow neutron-ha-tool to perform '
                          '"insecure" SSL (https) requests. The server\'s '
@@ -79,6 +89,10 @@ def parse_args():
     ]
     if sum(1 for x in modes if x) != 1:
         args_error(ap, "You must choose exactly one action")
+
+    if args.retry and args.l3_agent_check:
+        args_error(ap, "--l3-agent-check doesn't support --retry")
+
     return args
 
 
@@ -100,6 +114,22 @@ def setup_logging(args):
     syslog_formatter = logging.Formatter('%(name)s: %(levelname)s %(message)s')
     handler.setFormatter(syslog_formatter)
     LOG.addHandler(handler)
+
+
+def retry_neutron_exceptions(exception):
+    LOG.error(exception)
+    return isinstance(exception, NeutronException)
+
+
+def retry_with_backoff(fn, args):
+    if not args.retry:
+        return fn
+
+    return retrying.retry(
+        wait_exponential_multiplier=250,
+        wait_exponential_max=args.retry_max_interval,
+        retry_on_exception=retry_neutron_exceptions
+    )(fn)
 
 
 def run(args):
@@ -135,24 +165,29 @@ def run(args):
 
     if args.l3_agent_check:
         LOG.info("Performing L3 Agent Health Check")
+        # We don't want the health check to retry - if it fails, we
+        # need to take remedial action immediately
         l3_agent_check(qclient)
 
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
-        l3_agent_migrate(qclient, args.noop, args.now)
+        retry_with_backoff(l3_agent_migrate, args)(
+            qclient, args.noop, args.now)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from agent %s",
                  args.l3_agent_evacuate)
-        l3_agent_evacuate(qclient, args.l3_agent_evacuate, args.noop)
+        retry_with_backoff(l3_agent_evacuate, args)(
+            qclient, args.l3_agent_evacuate, args.noop)
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
-        l3_agent_rebalance(qclient, args.noop)
+        retry_with_backoff(l3_agent_rebalance, args)(
+            qclient, args.noop)
 
     elif args.replicate_dhcp:
         LOG.info("Performing DHCP Replication of Networks to Agents")
-        replicate_dhcp(qclient, args.noop)
+        retry_with_backoff(replicate_dhcp, args)(qclient, args.noop)
 
 
 def l3_agent_rebalance(qclient, noop=False):
