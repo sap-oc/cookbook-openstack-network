@@ -388,40 +388,40 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     return total_errors
 
 
-def l3_agent_evacuate(qclient, excludeagent, noop=False):
+def l3_agent_evacuate(qclient, agent_host, noop=False):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
     to another agent.
 
     :param qclient: A neutronclient
     :param noop: Optional noop flag
-    :param excludeagent: the name of the L3 agent to migrate routers from
+    :param agent_host: the hostname of the L3 agent to migrate routers from
     :returns: total number of errors encountered
 
     """
 
     agent_list = list_agents(qclient, agent_type='L3 agent')
-    target_list = target_agent_list(agent_list, 'L3 agent', excludeagent)
+    target_list = target_agent_list(agent_list, 'L3 agent', agent_host)
 
     if len(target_list) < 1:
         LOG.error("There are no l3 agents alive to migrate routers onto")
         return 0
 
-    agent_to_exclude = None
+    agent_to_evacuate = None
     for agent in agent_list:
-        if agent.get('host', None) == excludeagent:
-            agent_to_exclude = agent
+        if agent.get('host', None) == agent_host:
+            agent_to_evacuate = agent
             break
 
-    if not agent_to_exclude:
+    if not agent_to_evacuate:
         LOG.error("Could not locate agent to evacuate; aborting!")
         return 1
 
-    agent_id = agent_to_exclude['id']
+    agent_id = agent_to_evacuate['id']
     (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_id, target_list, noop)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
-             "would have been" if noop else "were", excludeagent)
+             "would have been" if noop else "were", agent_host)
     if errors > 0:
         LOG.error("%d errors encountered during evacuation")
 
@@ -689,20 +689,20 @@ def agent_alive_id_list(agent_list, agent_type):
             agent['admin_state_up'] is True]
 
 
-def target_agent_list(agent_list, agent_type, excludeagent):
+def target_agent_list(agent_list, agent_type, exclude_agent_host):
     """
     Return a list of agents that are alive, excluding the one we want to
     migrate from
 
     :param agent_list: API response for list_agents()
     :param agent_type: used to filter the type of agent
-    :param excludeagent: which agent should we exclude from the list
+    :param exclude_agent_host: hostname of agent to exclude from the list
 
     """
     return [agent['id'] for agent in agent_list
             if agent['agent_type'] == agent_type and
             agent['alive'] and
-            agent['host'] != excludeagent]
+            agent['host'] != exclude_agent_host]
 
 
 def agent_dead_id_list(agent_list, agent_type):
