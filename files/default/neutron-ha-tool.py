@@ -58,7 +58,7 @@ def parse_args():
                     help='Show routers associated with offline l3 agents')
     ap.add_argument('--l3-agent-migrate', action='store_true', default=False,
                     help='Migrate routers away from offline l3 agents')
-    ap.add_argument('--l3-agent-evacuate', default=None,
+    ap.add_argument('--l3-agent-evacuate', default=None, metavar='AGENT_ID',
                     help='Migrate routers away from a particular l3 agent')
     ap.add_argument('--l3-agent-rebalance', action='store_true', default=False,
                     help='Rebalance router count on all l3 agents')
