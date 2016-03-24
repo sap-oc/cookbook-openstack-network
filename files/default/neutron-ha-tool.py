@@ -15,6 +15,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+# Exit codes:
+#   0 - successful run, or no action required
+#   1 - unexpected error
+#   2 - router migration required (with --l3-agent-check)
+
 
 import logging
 import os
@@ -167,27 +172,30 @@ def run(args):
         LOG.info("Performing L3 Agent Health Check")
         # We don't want the health check to retry - if it fails, we
         # need to take remedial action immediately
-        l3_agent_check(qclient)
+        migrations_required = l3_agent_check(qclient)
+        return 2 if migrations_required > 0 else 0
 
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
-        retry_with_backoff(l3_agent_migrate, args)(
+        errors = retry_with_backoff(l3_agent_migrate, args)(
             qclient, args.noop, args.now)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from agent %s",
                  args.l3_agent_evacuate)
-        retry_with_backoff(l3_agent_evacuate, args)(
+        errors = retry_with_backoff(l3_agent_evacuate, args)(
             qclient, args.l3_agent_evacuate, args.noop)
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
-        retry_with_backoff(l3_agent_rebalance, args)(
+        errors = retry_with_backoff(l3_agent_rebalance, args)(
             qclient, args.noop)
 
     elif args.replicate_dhcp:
         LOG.info("Performing DHCP Replication of Networks to Agents")
-        retry_with_backoff(replicate_dhcp, args)(qclient, args.noop)
+        errors = retry_with_backoff(replicate_dhcp, args)(qclient, args.noop)
+
+    return 1 if errors > 0 else 0
 
 
 def l3_agent_rebalance(qclient, noop=False):
@@ -229,7 +237,7 @@ def l3_agent_rebalance(qclient, noop=False):
     num_agents = len(agents)
     if num_agents <= 1:
         LOG.info("No rebalancing required for 1 or fewer agents")
-        return
+        return 0
 
     for l3_agent in agents:
         l3_agent_dict[l3_agent['id']] = \
@@ -241,6 +249,8 @@ def l3_agent_rebalance(qclient, noop=False):
     num_agents = len(ordered_l3_agent_list)
     LOG.info("Agent list: %s", ordered_l3_agent_list[0:(num_agents-1/2)+1])
     i = 0
+    migrations = 0
+    errors = 0
     for agent in ordered_l3_agent_list[0:num_agents-1/2]:
         low_agent_id = ordered_l3_agent_list[i]
         hgh_agent_id = ordered_l3_agent_list[-(i+1)]
@@ -266,7 +276,13 @@ def l3_agent_rebalance(qclient, noop=False):
                                      low_agent_id):
                 low_agent_router_count += 1
                 hgh_agent_router_count -= 1
+                migrations += 1
+            else:
+                errors += 1
+
         i += 1
+
+    return errors
 
 
 def l3_agent_check(qclient):
@@ -275,6 +291,7 @@ def l3_agent_check(qclient):
     that are offline and where we would migrate them to.
 
     :param qclient: A neutronclient
+    :returns: total numbers of migrations required
 
     """
 
@@ -286,7 +303,7 @@ def l3_agent_check(qclient):
              len(agent_dead_list), len(agent_alive_list))
 
     if len(agent_dead_list) == 0:
-        return
+        return 0
 
     for agent_id in agent_dead_list:
         LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
@@ -304,8 +321,7 @@ def l3_agent_check(qclient):
             LOG.warn("Would like to migrate router=%s to agent=%s",
                      router_id, target_id)
 
-    if migration_count > 0:
-        sys.exit(2)
+    return migration_count
 
 
 def l3_agent_migrate(qclient, noop=False, now=False):
@@ -320,7 +336,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
                 amount of time (between 30 and 60 seconds) before migration,
                 and if an agent comes online, migration is abandoned. If
                 true, routers are migrated immediately.
-
+    :returns: total number of errors encountered
     """
 
     agent_list = list_agents(qclient)
@@ -330,12 +346,12 @@ def l3_agent_migrate(qclient, noop=False, now=False):
              len(agent_dead_list), len(agent_alive_list))
 
     if len(agent_dead_list) == 0:
-        return
+        return 0
 
     if len(agent_alive_list) < 1:
         LOG.error("There are no l3 agents alive to migrate routers onto - "
                   "aborting!")
-        return
+        return 1
 
     timeout = 0
     if not now:
@@ -347,7 +363,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
                 LOG.info("Skipping router failover since an agent came "
                          "online while ensuring agents offline for %d "
                          "seconds", TAKEOVER_DELAY)
-                sys.exit(0)
+                return 0
 
             LOG.info("Agent found offline for seconds=%d but waiting "
                      "seconds=%d before migration",
@@ -355,13 +371,21 @@ def l3_agent_migrate(qclient, noop=False, now=False):
             timeout += 1
             time.sleep(1)
 
-    migration_count = 0
+    total_errors = 0
+    total_migrations = 0
     for agent_id in agent_dead_list:
-        migration_count += migrate_l3_routers_from_agent(
-            qclient, agent_id, agent_alive_list, noop)
+        (migrations, errors) = \
+            migrate_l3_routers_from_agent(
+                qclient, agent_id, agent_alive_list, noop)
+        total_migrations += migrations
+        total_errors += errors
 
     LOG.info("%d routers required migration from offline L3 agents",
-             migration_count)
+             total_migrations)
+    if total_errors > 0:
+        LOG.error("%d errors encountered during migration")
+
+    return total_errors
 
 
 def l3_agent_evacuate(qclient, excludeagent, noop=False):
@@ -372,6 +396,7 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
     :param qclient: A neutronclient
     :param noop: Optional noop flag
     :param excludeagent: the name of the L3 agent to migrate routers from
+    :returns: total number of errors encountered
 
     """
 
@@ -380,7 +405,7 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
 
     if len(target_list) < 1:
         LOG.error("There are no l3 agents alive to migrate routers onto")
-        return
+        return 0
 
     agent_to_exclude = None
     for agent in agent_list:
@@ -390,13 +415,17 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
 
     if not agent_to_exclude:
         LOG.error("Could not locate agent to evacuate; aborting!")
-        return
+        return 1
 
     agent_id = agent_to_exclude['id']
-    migration_count = \
+    (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_id, target_list, noop)
-    LOG.info("%d routers required evacuation from L3 agent %s",
-             migration_count, excludeagent)
+    LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
+             "would have been" if noop else "were", excludeagent)
+    if errors > 0:
+        LOG.error("%d errors encountered during evacuation")
+
+    return errors
 
 
 def replicate_dhcp(qclient, noop=False):
@@ -410,6 +439,7 @@ def replicate_dhcp(qclient, noop=False):
     """
 
     added = 0
+    errors = 0
     networks = list_networks(qclient)
     network_id_list = [n['id'] for n in networks]
     agents = list_agents(qclient, agent_type='DHCP agent')
@@ -433,20 +463,31 @@ def replicate_dhcp(qclient, noop=False):
             except:
                 LOG.exception("Failed to add network_id=%s to"
                               "dhcp_agent=%s", network_id, dhcp_agent_id)
+                errors += 1
                 continue
 
     LOG.info("Added %d networks to DHCP agents", added)
+    if errors > 0:
+        LOG.error("%d errors encountered during DHCP replication")
+
+    return errors
 
 
 def migrate_l3_routers_from_agent(qclient, agent_id, target_ids, noop):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent_id)
     router_id_list = list_routers_on_l3_agent(qclient, agent_id)
 
+    migrations = 0
+    errors = 0
     for router_id in router_id_list:
         target_id = random.choice(target_ids)
-        migrate_router_safely(qclient, noop, router_id, agent_id, target_id)
+        if migrate_router_safely(qclient, noop,
+                                 router_id, agent_id, target_id):
+            migrations += 1
+        else:
+            errors += 1
 
-    return len(router_id_list)
+    return (migrations, errors)
 
 
 def migrate_router_safely(qclient, noop, router_id, agent_id, target_id):
@@ -680,10 +721,10 @@ if __name__ == '__main__':
     setup_logging(args)
 
     try:
-        run(args)
-        sys.exit(0)
-    except Exception as err:
-        LOG.error(err)
+        ret = run(args)
+        sys.exit(ret)
+    except NeutronException as e:
+        LOG.error(e)
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(1)
