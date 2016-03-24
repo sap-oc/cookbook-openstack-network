@@ -255,7 +255,7 @@ def l3_agent_rebalance(qclient, noop=False):
         low_agent_router_count = len(l3_agent_dict[low_agent_id])
         hgh_agent_router_count = len(l3_agent_dict[hgh_agent_id])
 
-        LOG.info("Low Count=%s, High Count=%s",
+        LOG.info("Low Count=%d, High Count=%d",
                  low_agent_router_count, hgh_agent_router_count)
 
         for router_id in l3_agent_dict[hgh_agent_id]:
@@ -282,7 +282,7 @@ def l3_agent_check(qclient):
     agent_list = list_agents(qclient)
     agent_dead_list = agent_dead_id_list(agent_list, 'L3 agent')
     agent_alive_list = agent_alive_id_list(agent_list, 'L3 agent')
-    LOG.info("There are %s offline L3 agents and %s online L3 agents",
+    LOG.info("There are %d offline L3 agents and %d online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
     if len(agent_dead_list) == 0:
@@ -326,7 +326,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     agent_list = list_agents(qclient)
     agent_dead_list = agent_dead_id_list(agent_list, 'L3 agent')
     agent_alive_list = agent_alive_id_list(agent_list, 'L3 agent')
-    LOG.info("There are %s offline L3 agents and %s online L3 agents",
+    LOG.info("There are %d offline L3 agents and %d online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
     if len(agent_dead_list) == 0:
@@ -345,12 +345,12 @@ def l3_agent_migrate(qclient, noop=False, now=False):
                                                      'L3 agent')
             if len(agent_dead_list_new) < len(agent_dead_list):
                 LOG.info("Skipping router failover since an agent came "
-                         "online while ensuring agents offline for %s "
+                         "online while ensuring agents offline for %d "
                          "seconds", TAKEOVER_DELAY)
                 sys.exit(0)
 
-            LOG.info("Agent found offline for seconds=%s but waiting "
-                     "seconds=%s before migration",
+            LOG.info("Agent found offline for seconds=%d but waiting "
+                     "seconds=%d before migration",
                      timeout, TAKEOVER_DELAY)
             timeout += 1
             time.sleep(1)
@@ -360,7 +360,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
         migration_count += migrate_l3_routers_from_agent(
             qclient, agent_id, agent_alive_list, noop)
 
-    LOG.info("%s routers required migration from offline L3 agents",
+    LOG.info("%d routers required migration from offline L3 agents",
              migration_count)
 
 
@@ -395,7 +395,7 @@ def l3_agent_evacuate(qclient, excludeagent, noop=False):
     agent_id = agent_to_exclude['id']
     migration_count = \
         migrate_l3_routers_from_agent(qclient, agent_id, target_list, noop)
-    LOG.info("%s routers required evacuation from L3 agent %s",
+    LOG.info("%d routers required evacuation from L3 agent %s",
              migration_count, excludeagent)
 
 
@@ -413,7 +413,7 @@ def replicate_dhcp(qclient, noop=False):
     networks = list_networks(qclient)
     network_id_list = [n['id'] for n in networks]
     agents = list_agents(qclient, agent_type='DHCP agent')
-    LOG.info("Replicating %s networks to %s DHCP agents", len(networks),
+    LOG.info("Replicating %d networks to %d DHCP agents", len(networks),
              len(agents))
     for dhcp_agent_id in [a['id'] for a in agents]:
         networks_on_agent = \
@@ -435,7 +435,7 @@ def replicate_dhcp(qclient, noop=False):
                               "dhcp_agent=%s", network_id, dhcp_agent_id)
                 continue
 
-    LOG.info("Added %s networks to DHCP agents", added)
+    LOG.info("Added %d networks to DHCP agents", added)
 
 
 def migrate_l3_routers_from_agent(qclient, agent_id, target_ids, noop):
