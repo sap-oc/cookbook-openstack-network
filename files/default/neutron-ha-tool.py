@@ -317,7 +317,8 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     :param qclient: A neutronclient
     :param noop: Optional noop flag
     :param now: Optional. If false (the default), we'll wait for a random
-                amount of time (between 30 and 60 seconds) before migration. If
+                amount of time (between 30 and 60 seconds) before migration,
+                and if an agent comes online, migration is abandoned. If
                 true, routers are migrated immediately.
 
     """
