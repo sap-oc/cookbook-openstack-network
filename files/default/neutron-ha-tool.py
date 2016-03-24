@@ -69,7 +69,24 @@ def parse_args():
                          'certificate will not be verified against any '
                          'certificate authorities. This option should be used '
                          'with caution.')
-    return ap.parse_args()
+    args = ap.parse_args()
+    modes = [
+        args.l3_agent_check,
+        args.l3_agent_migrate,
+        args.l3_agent_evacuate,
+        args.l3_agent_rebalance,
+        args.replicate_dhcp,
+    ]
+    if sum(1 for x in modes if x) != 1:
+        args_error(ap, "You must choose exactly one action")
+    return args
+
+
+# Replacement for ArgumentParser.error() which is hardcoded to exit 2,
+# clashing with our meaning of exit code 2.
+def args_error(ap, message):
+    ap.print_usage()
+    ap.exit(3, '%s: error: %s\n' % (ap.prog, message))
 
 
 def setup_logging(args):
@@ -120,20 +137,20 @@ def run(args):
         LOG.info("Performing L3 Agent Health Check")
         l3_agent_check(qclient)
 
-    if args.l3_agent_migrate:
+    elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
         l3_agent_migrate(qclient, args.noop, args.now)
 
-    if args.l3_agent_evacuate:
+    elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from agent %s",
                  args.l3_agent_evacuate)
         l3_agent_evacuate(qclient, args.l3_agent_evacuate, args.noop)
 
-    if args.l3_agent_rebalance:
+    elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
         l3_agent_rebalance(qclient, args.noop)
 
-    if args.replicate_dhcp:
+    elif args.replicate_dhcp:
         LOG.info("Performing DHCP Replication of Networks to Agents")
         replicate_dhcp(qclient, args.noop)
 
