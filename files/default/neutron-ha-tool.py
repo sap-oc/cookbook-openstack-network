@@ -126,6 +126,10 @@ def retry_neutron_exceptions(exception):
     return isinstance(exception, NeutronException)
 
 
+def retry_on_errors(num_errors):
+    return num_errors > 0
+
+
 def retry_with_backoff(fn, args):
     if not args.retry:
         return fn
@@ -133,7 +137,8 @@ def retry_with_backoff(fn, args):
     return retrying.retry(
         wait_exponential_multiplier=250,
         wait_exponential_max=args.retry_max_interval,
-        retry_on_exception=retry_neutron_exceptions
+        retry_on_exception=retry_neutron_exceptions,
+        retry_on_result=retry_on_errors
     )(fn)
 
 
