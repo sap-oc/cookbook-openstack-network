@@ -440,6 +440,7 @@ def replicate_dhcp(qclient, noop=False):
 
     :param qclient: A neutronclient
     :param noop: Optional noop flag
+    :returns: total number of errors encountered
 
     """
 
