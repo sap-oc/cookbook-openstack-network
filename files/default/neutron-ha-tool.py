@@ -63,7 +63,7 @@ def parse_args():
                     help='Show routers associated with offline l3 agents')
     ap.add_argument('--l3-agent-migrate', action='store_true', default=False,
                     help='Migrate routers away from offline l3 agents')
-    ap.add_argument('--l3-agent-evacuate', default=None, metavar='AGENT_ID',
+    ap.add_argument('--l3-agent-evacuate', default=None, metavar='HOST',
                     help='Migrate routers away from a particular l3 agent')
     ap.add_argument('--l3-agent-rebalance', action='store_true', default=False,
                     help='Rebalance router count on all l3 agents')
@@ -186,7 +186,7 @@ def run(args):
             qclient, args.noop, args.now)
 
     elif args.l3_agent_evacuate:
-        LOG.info("Performing L3 Agent Evacuation from agent %s",
+        LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
         errors = retry_with_backoff(l3_agent_evacuate, args)(
             qclient, args.l3_agent_evacuate, args.noop)
