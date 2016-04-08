@@ -534,8 +534,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id in list_routers_on_l3_agent(qclient, agent_id):
-        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s",
-                           router_id, agent_id)
+        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s" %
+                           (router_id, agent_id))
 
     # add the router id to a live agent
     router_body = {'router_id': router_id}
@@ -543,8 +543,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id not in list_routers_on_l3_agent(qclient, target_id):
-        raise RuntimeError("Failed to add router_id=%s from agent_id=%s",
-                           router_id, agent_id)
+        raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
+                           (router_id, agent_id))
 
 
 def list_networks(qclient):
