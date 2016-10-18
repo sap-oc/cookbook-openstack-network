@@ -21,16 +21,16 @@
 #   2 - router migration required (with --l3-agent-check)
 
 
-import logging
-import os
-import sys
 import argparse
+from collections import OrderedDict
+import logging
+from logging.handlers import SysLogHandler
+import os
 import random
 import retrying
+import sys
 import time
 
-from logging.handlers import SysLogHandler
-from collections import OrderedDict
 from neutronclient.neutron import client
 from neutronclient.common.exceptions import NeutronException
 
