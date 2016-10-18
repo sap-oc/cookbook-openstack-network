@@ -39,7 +39,7 @@ LOG = logging.getLogger('neutron-ha-tool')
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 LOG_DATE = '%m-%d %H:%M'
 DESCRIPTION = "neutron High Availability Tool"
-TAKEOVER_DELAY = int(random.random()*30+30)
+TAKEOVER_DELAY = int(random.random() * 30 + 30)
 OS_PASSWORD_FILE = '/etc/neutron/os_password'
 
 
@@ -252,13 +252,14 @@ def l3_agent_rebalance(qclient, noop=False):
                                                key=lambda t: len(t[0])))
     ordered_l3_agent_list = list(ordered_l3_agent_dict)
     num_agents = len(ordered_l3_agent_list)
-    LOG.info("Agent list: %s", ordered_l3_agent_list[0:(num_agents-1/2)+1])
+    LOG.info("Agent list: %s",
+             ordered_l3_agent_list[0:(num_agents - 1 / 2) + 1])
     i = 0
     migrations = 0
     errors = 0
-    for agent in ordered_l3_agent_list[0:num_agents-1/2]:
+    for agent in ordered_l3_agent_list[0:num_agents - 1 / 2]:
         low_agent_id = ordered_l3_agent_list[i]
-        hgh_agent_id = ordered_l3_agent_list[-(i+1)]
+        hgh_agent_id = ordered_l3_agent_list[-(i + 1)]
 
         # do nothing if we end up comparing the same router
         if low_agent_id == hgh_agent_id:
