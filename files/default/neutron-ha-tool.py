@@ -737,10 +737,21 @@ def target_agent_list(agent_list, agent_type, exclude_agent_host):
     :param exclude_agent_host: hostname of agent to exclude from the list
 
     """
+    agent_info = [
+        i for i in agent_list
+        if i.get('host', None) == exclude_agent_host
+    ]
+    if not agent_info:
+        LOG.error("Cannot find agent %s information.", exclude_agent_host)
+        return []
+    agent_info = agent_info[0]
+    agent_mode = agent_info['configurations']['agent_mode']
+
     return [agent['id'] for agent in agent_list
             if agent['agent_type'] == agent_type and
             agent['alive'] and
-            agent['host'] != exclude_agent_host]
+            agent['host'] != exclude_agent_host and
+            agent['configurations']['agent_mode'] == agent_mode]
 
 
 def agent_dead_id_list(agent_list, agent_type):
