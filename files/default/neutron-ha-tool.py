@@ -388,7 +388,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     LOG.info("%d routers required migration from offline L3 agents",
              total_migrations)
     if total_errors > 0:
-        LOG.error("%d errors encountered during migration")
+        LOG.error("%d errors encountered during migration" % total_errors)
 
     return total_errors
 
@@ -428,7 +428,7 @@ def l3_agent_evacuate(qclient, agent_host, noop=False):
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
-        LOG.error("%d errors encountered during evacuation")
+        LOG.error("%d errors encountered during evacuation" % errors)
 
     return errors
 
@@ -474,7 +474,7 @@ def replicate_dhcp(qclient, noop=False):
 
     LOG.info("Added %d networks to DHCP agents", added)
     if errors > 0:
-        LOG.error("%d errors encountered during DHCP replication")
+        LOG.error("%d errors encountered during DHCP replication" % errors)
 
     return errors
 
@@ -534,8 +534,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id in list_routers_on_l3_agent(qclient, agent_id):
-        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s",
-                           router_id, agent_id)
+        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s" %
+                           (router_id, agent_id))
 
     # add the router id to a live agent
     router_body = {'router_id': router_id}
@@ -543,8 +543,8 @@ def migrate_router(qclient, router_id, agent_id, target_id):
 
     # ensure it is removed or log an error
     if router_id not in list_routers_on_l3_agent(qclient, target_id):
-        raise RuntimeError("Failed to add router_id=%s from agent_id=%s",
-                           router_id, agent_id)
+        raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
+                           (router_id, agent_id))
 
 
 def list_networks(qclient):
