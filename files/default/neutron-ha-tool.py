@@ -54,10 +54,13 @@ IDENTITY_API_VERSIONS = {
 
 def parse_args():
     # ensure environment has necessary items to authenticate
-    for key in ['OS_USERNAME', 'OS_PASSWORD', 'OS_AUTH_URL',
-                'OS_ENDPOINT_TYPE']:
+    for key in ['OS_USERNAME', 'OS_AUTH_URL', 'OS_REGION_NAME']:
         if key not in os.environ.keys():
-            raise SystemExit("Your environment is missing '%s'")
+            raise SystemExit("Your environment is missing '%s'" % key)
+    keys = ['OS_TENANT_NAME', 'OS_PROJECT_NAME']
+    if not any(key in os.environ.keys() for key in keys):
+        raise SystemExit("Your environment is missing "
+                         "'OS_TENANT_NAME' or 'OS_PROJECT_NAME")
 
     ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('-d', '--debug', action='store_true',
@@ -171,21 +174,24 @@ def run(args):
     if not auth_version:
         auth_version = os.getenv('OS_IDENTITY_API_VERSION', None)
         if not auth_version:
-            auth_version = 3
+            auth_version = '2.0'
 
     kclient = IDENTITY_API_VERSIONS[auth_version]
     kclient_kwargs = dict()
     kclient_kwargs['username'] = os.environ['OS_USERNAME']
-    kclient_kwargs['password'] = os.environ['OS_PASSWORD']
+    kclient_kwargs['password'] = os_password
     kclient_kwargs['insecure'] = args.insecure
     kclient_kwargs['ca_cert'] = ca
     kclient_kwargs['auth_url'] = os.environ['OS_AUTH_URL']
+    kclient_kwargs['region_name'] = os.environ['OS_REGION_NAME']
 
     tenant_name = os.getenv('OS_TENANT_NAME')
-    if tenant_name and auth_version != 3:
+    if tenant_name:
         kclient_kwargs['tenant_name'] = tenant_name
     else:
         kclient_kwargs['project_name'] = os.environ['OS_PROJECT_NAME']
+
+    endpoint_type = os.getenv('OS_ENDPOINT_TYPE', 'internalURL')
 
     # Instantiate Keystone client
     keystone = kclient.Client(**kclient_kwargs)
@@ -195,7 +201,7 @@ def run(args):
         '2.0',
         endpoint_url=keystone.service_catalog.url_for(
             service_type='network',
-            endpoint_type=os.environ['OS_ENDPOINT_TYPE']
+            endpoint_type=endpoint_type
         ),
         token=keystone.get_token(keystone.session)
     )
