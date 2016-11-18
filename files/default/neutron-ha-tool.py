@@ -21,36 +21,46 @@
 #   2 - router migration required (with --l3-agent-check)
 
 
-import logging
-import os
-import sys
 import argparse
+from collections import OrderedDict
+import logging
+from logging.handlers import SysLogHandler
+import os
 import random
 import retrying
+import sys
 import time
 
-from logging.handlers import SysLogHandler
-from collections import OrderedDict
-from neutronclient.neutron import client
 from neutronclient.common.exceptions import NeutronException
+from neutronclient.neutron import client as nclient
+import keystoneclient.v2_0.client as kclientv2
+import keystoneclient.v3.client as kclientv3
 
 
 LOG = logging.getLogger('neutron-ha-tool')
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 LOG_DATE = '%m-%d %H:%M'
 DESCRIPTION = "neutron High Availability Tool"
-TAKEOVER_DELAY = int(random.random()*30+30)
+TAKEOVER_DELAY = int(random.random() * 30 + 30)
 OS_PASSWORD_FILE = '/etc/neutron/os_password'
+
+
+IDENTITY_API_VERSIONS = {
+    '2.0': kclientv2,
+    '2': kclientv2,
+    '3': kclientv3
+}
 
 
 def parse_args():
     # ensure environment has necessary items to authenticate
-    for key in ['OS_TENANT_NAME', 'OS_USERNAME',
-                'OS_AUTH_URL', 'OS_REGION_NAME']:
+    for key in ['OS_USERNAME', 'OS_AUTH_URL', 'OS_REGION_NAME']:
         if key not in os.environ.keys():
-            # We don't have a logger set up yet
-            sys.stderr.write("Your environment is missing '%s'\n" % key)
-            sys.exit(1)
+            raise SystemExit("Your environment is missing '%s'" % key)
+    keys = ['OS_TENANT_NAME', 'OS_PROJECT_NAME']
+    if not any(key in os.environ.keys() for key in keys):
+        raise SystemExit("Your environment is missing "
+                         "'OS_TENANT_NAME' or 'OS_PROJECT_NAME")
 
     ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('-d', '--debug', action='store_true',
@@ -160,15 +170,41 @@ def run(args):
                   "or from %s; aborting!" % OS_PASSWORD_FILE)
         sys.exit(1)
 
-    # instantiate client
-    qclient = client.Client('2.0', auth_url=os.environ['OS_AUTH_URL'],
-                            username=os.environ['OS_USERNAME'],
-                            tenant_name=os.environ['OS_TENANT_NAME'],
-                            password=os_password,
-                            endpoint_type='internalURL',
-                            region_name=os.environ['OS_REGION_NAME'],
-                            insecure=args.insecure,
-                            ca_cert=ca)
+    auth_version = os.getenv('OS_AUTH_VERSION', None)
+    if not auth_version:
+        auth_version = os.getenv('OS_IDENTITY_API_VERSION', None)
+        if not auth_version:
+            auth_version = '2.0'
+
+    kclient = IDENTITY_API_VERSIONS[auth_version]
+    kclient_kwargs = dict()
+    kclient_kwargs['username'] = os.environ['OS_USERNAME']
+    kclient_kwargs['password'] = os_password
+    kclient_kwargs['insecure'] = args.insecure
+    kclient_kwargs['ca_cert'] = ca
+    kclient_kwargs['auth_url'] = os.environ['OS_AUTH_URL']
+    kclient_kwargs['region_name'] = os.environ['OS_REGION_NAME']
+
+    tenant_name = os.getenv('OS_TENANT_NAME')
+    if tenant_name:
+        kclient_kwargs['tenant_name'] = tenant_name
+    else:
+        kclient_kwargs['project_name'] = os.environ['OS_PROJECT_NAME']
+
+    endpoint_type = os.getenv('OS_ENDPOINT_TYPE', 'internalURL')
+
+    # Instantiate Keystone client
+    keystone = kclient.Client(**kclient_kwargs)
+
+    # Instantiate Neutron client
+    qclient = nclient.Client(
+        '2.0',
+        endpoint_url=keystone.service_catalog.url_for(
+            service_type='network',
+            endpoint_type=endpoint_type
+        ),
+        token=keystone.get_token(keystone.session)
+    )
 
     # set json return type
     qclient.format = 'json'
@@ -252,13 +288,14 @@ def l3_agent_rebalance(qclient, noop=False):
                                                key=lambda t: len(t[0])))
     ordered_l3_agent_list = list(ordered_l3_agent_dict)
     num_agents = len(ordered_l3_agent_list)
-    LOG.info("Agent list: %s", ordered_l3_agent_list[0:(num_agents-1/2)+1])
+    LOG.info("Agent list: %s",
+             ordered_l3_agent_list[0:(num_agents - 1 / 2) + 1])
     i = 0
     migrations = 0
     errors = 0
-    for agent in ordered_l3_agent_list[0:num_agents-1/2]:
+    for agent in ordered_l3_agent_list[0:num_agents - 1 / 2]:
         low_agent_id = ordered_l3_agent_list[i]
-        hgh_agent_id = ordered_l3_agent_list[-(i+1)]
+        hgh_agent_id = ordered_l3_agent_list[-(i + 1)]
 
         # do nothing if we end up comparing the same router
         if low_agent_id == hgh_agent_id:
@@ -388,7 +425,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     LOG.info("%d routers required migration from offline L3 agents",
              total_migrations)
     if total_errors > 0:
-        LOG.error("%d errors encountered during migration" % total_errors)
+        LOG.error("%d errors encountered during migration", total_errors)
 
     return total_errors
 
@@ -428,7 +465,7 @@ def l3_agent_evacuate(qclient, agent_host, noop=False):
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
-        LOG.error("%d errors encountered during evacuation" % errors)
+        LOG.error("%d errors encountered during evacuation", errors)
 
     return errors
 
@@ -474,7 +511,7 @@ def replicate_dhcp(qclient, noop=False):
 
     LOG.info("Added %d networks to DHCP agents", added)
     if errors > 0:
-        LOG.error("%d errors encountered during DHCP replication" % errors)
+        LOG.error("%d errors encountered during DHCP replication", errors)
 
     return errors
 
@@ -593,7 +630,8 @@ def list_routers(qclient):
 
     resp = qclient.list_routers()
     LOG.debug("list_routers: %s", resp)
-    return resp['routers']
+    # Filter routers to not include HA routers
+    return [i for i in resp['routers'] if not i.get('ha') == True]
 
 
 def list_routers_on_l3_agent(qclient, agent_id):
@@ -605,7 +643,7 @@ def list_routers_on_l3_agent(qclient, agent_id):
 
     resp = qclient.list_routers_on_l3_agent(agent_id)
     LOG.debug("list_routers_on_l3_agent: %s", resp)
-    return [r['id'] for r in resp['routers']]
+    return [r['id'] for r in resp['routers'] if not r.get('ha') == True]
 
 
 def list_agents(qclient, agent_type=None):
@@ -705,10 +743,21 @@ def target_agent_list(agent_list, agent_type, exclude_agent_host):
     :param exclude_agent_host: hostname of agent to exclude from the list
 
     """
+    agent_info = [
+        i for i in agent_list
+        if i.get('host', None) == exclude_agent_host
+    ]
+    if not agent_info:
+        LOG.error("Cannot find agent %s information.", exclude_agent_host)
+        return []
+    agent_info = agent_info[0]
+    agent_mode = agent_info['configurations']['agent_mode']
+
     return [agent['id'] for agent in agent_list
             if agent['agent_type'] == agent_type and
             agent['alive'] and
-            agent['host'] != exclude_agent_host]
+            agent['host'] != exclude_agent_host and
+            agent['configurations']['agent_mode'] == agent_mode]
 
 
 def agent_dead_id_list(agent_list, agent_type):
