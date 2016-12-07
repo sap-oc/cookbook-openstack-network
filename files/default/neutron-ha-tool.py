@@ -274,6 +274,7 @@ def l3_agent_rebalance(qclient, noop=False):
     #  }
 
     l3_agent_dict = {}
+    routers_on_l3_agent_dict = {}
     agents = list_agents(qclient, agent_type='L3 agent')
     num_agents = len(agents)
     if num_agents <= 1:
@@ -281,10 +282,11 @@ def l3_agent_rebalance(qclient, noop=False):
         return 0
 
     for l3_agent in agents:
-        l3_agent_dict[l3_agent['id']] = \
+        l3_agent_dict[l3_agent['id']] = l3_agent
+        routers_on_l3_agent_dict[l3_agent['id']] = \
             list_routers_on_l3_agent(qclient, l3_agent['id'])
 
-    ordered_l3_agent_dict = OrderedDict(sorted(l3_agent_dict.items(),
+    ordered_l3_agent_dict = OrderedDict(sorted(routers_on_l3_agent_dict.items(),
                                                key=lambda t: len(t[0])))
     ordered_l3_agent_list = list(ordered_l3_agent_dict)
     num_agents = len(ordered_l3_agent_list)
@@ -304,18 +306,19 @@ def l3_agent_rebalance(qclient, noop=False):
         LOG.info("Examining low_agent=%s, high_agent=%s",
                  low_agent_id, hgh_agent_id)
 
-        low_agent_router_count = len(l3_agent_dict[low_agent_id])
-        hgh_agent_router_count = len(l3_agent_dict[hgh_agent_id])
+        low_agent_router_count = len(routers_on_l3_agent_dict[low_agent_id])
+        hgh_agent_router_count = len(routers_on_l3_agent_dict[hgh_agent_id])
 
         LOG.info("Low Count=%d, High Count=%d",
                  low_agent_router_count, hgh_agent_router_count)
 
-        for router_id in l3_agent_dict[hgh_agent_id]:
+        for router_id in routers_on_l3_agent_dict[hgh_agent_id]:
             if low_agent_router_count >= hgh_agent_router_count:
                 break
 
-            if migrate_router_safely(qclient, noop, router_id, hgh_agent_id,
-                                     low_agent_id):
+            if migrate_router_safely(qclient, noop, router_id,
+                                     l3_agent_dict[hgh_agent_id],
+                                     l3_agent_dict[low_agent_id]):
                 low_agent_router_count += 1
                 hgh_agent_router_count -= 1
                 migrations += 1
@@ -339,29 +342,29 @@ def l3_agent_check(qclient):
 
     migration_count = 0
     agent_list = list_agents(qclient)
-    agent_dead_list = agent_dead_id_list(agent_list, 'L3 agent')
-    agent_alive_list = agent_alive_id_list(agent_list, 'L3 agent')
+    agent_dead_list = list_dead_agents(agent_list, 'L3 agent')
+    agent_alive_list = list_alive_agents(agent_list, 'L3 agent')
     LOG.info("There are %d offline L3 agents and %d online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
     if len(agent_dead_list) == 0:
         return 0
 
-    for agent_id in agent_dead_list:
-        LOG.info("Querying agent_id=%s for routers to migrate", agent_id)
-        router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+    for agent in agent_dead_list:
+        LOG.info("Querying agent_id=%s for routers to migrate", agent['id'])
+        router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
 
         for router_id in router_id_list:
             try:
-                target_id = random.choice(agent_alive_list)
+                target = random.choice(agent_alive_list)
             except IndexError:
                 LOG.warn("There are no l3 agents alive we could "
                          "migrate routers onto.")
-                target_id = None
+                target = {'id': None}
 
             migration_count += 1
             LOG.warn("Would like to migrate router=%s to agent=%s",
-                     router_id, target_id)
+                     router_id, target['id'])
 
     return migration_count
 
@@ -382,8 +385,8 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     """
 
     agent_list = list_agents(qclient)
-    agent_dead_list = agent_dead_id_list(agent_list, 'L3 agent')
-    agent_alive_list = agent_alive_id_list(agent_list, 'L3 agent')
+    agent_dead_list = list_dead_agents(agent_list, 'L3 agent')
+    agent_alive_list = list_alive_agents(agent_list, 'L3 agent')
     LOG.info("There are %d offline L3 agents and %d online L3 agents",
              len(agent_dead_list), len(agent_alive_list))
 
@@ -399,8 +402,8 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     if not now:
         while timeout < TAKEOVER_DELAY:
             agent_list_new = list_agents(qclient)
-            agent_dead_list_new = agent_dead_id_list(agent_list_new,
-                                                     'L3 agent')
+            agent_dead_list_new = list_dead_agents(agent_list_new,
+                                                   'L3 agent')
             if len(agent_dead_list_new) < len(agent_dead_list):
                 LOG.info("Skipping router failover since an agent came "
                          "online while ensuring agents offline for %d "
@@ -415,10 +418,10 @@ def l3_agent_migrate(qclient, noop=False, now=False):
 
     total_errors = 0
     total_migrations = 0
-    for agent_id in agent_dead_list:
+    for agent in agent_dead_list:
         (migrations, errors) = \
             migrate_l3_routers_from_agent(
-                qclient, agent_id, agent_alive_list, noop)
+                qclient, agent, agent_alive_list, noop)
         total_migrations += migrations
         total_errors += errors
 
@@ -459,9 +462,9 @@ def l3_agent_evacuate(qclient, agent_host, noop=False):
         LOG.error("Could not locate agent to evacuate; aborting!")
         return 1
 
-    agent_id = agent_to_evacuate['id']
     (migrations, errors) = \
-        migrate_l3_routers_from_agent(qclient, agent_id, target_list, noop)
+        migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
+                                      target_list, noop)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
@@ -516,16 +519,16 @@ def replicate_dhcp(qclient, noop=False):
     return errors
 
 
-def migrate_l3_routers_from_agent(qclient, agent_id, target_ids, noop):
-    LOG.info("Querying agent_id=%s for routers to migrate away", agent_id)
-    router_id_list = list_routers_on_l3_agent(qclient, agent_id)
+def migrate_l3_routers_from_agent(qclient, agent, targets, noop):
+    LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
+    router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
 
     migrations = 0
     errors = 0
     for router_id in router_id_list:
-        target_id = random.choice(target_ids)
+        target = random.choice(targets)
         if migrate_router_safely(qclient, noop,
-                                 router_id, agent_id, target_id):
+                                 router_id, agent, target):
             migrations += 1
         else:
             errors += 1
@@ -533,22 +536,22 @@ def migrate_l3_routers_from_agent(qclient, agent_id, target_ids, noop):
     return (migrations, errors)
 
 
-def migrate_router_safely(qclient, noop, router_id, agent_id, target_id):
+def migrate_router_safely(qclient, noop, router_id, agent, target):
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
-                 "to agent=%s", router_id, agent_id, target_id)
+                 "to agent=%s", router_id, agent['id'], target['id'])
         return True
 
     try:
-        migrate_router(qclient, router_id, agent_id, target_id)
+        migrate_router(qclient, router_id, agent, target)
         return True
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
-                      "to agent=%s", router_id, agent_id, target_id)
+                      "to agent=%s", router_id, agent['id'], target['id'])
         return False
 
 
-def migrate_router(qclient, router_id, agent_id, target_id):
+def migrate_router(qclient, router_id, agent, target):
     """
     Returns nothing, and raises exceptions on errors.
 
@@ -559,29 +562,29 @@ def migrate_router(qclient, router_id, agent_id, target_id):
     """
 
     LOG.info("Migrating router=%s from agent=%s to agent=%s",
-             router_id, agent_id, target_id)
+             router_id, agent['id'], target['id'])
 
     # N.B. The neutron API will return "success" even when there is a
     # subsequent failure during the add or remove process so we must check to
     # ensure the router has been added or removed
 
     # Remove the router from the original agent
-    qclient.remove_router_from_l3_agent(agent_id, router_id)
-    LOG.debug("Removed router from agent=%s" % agent_id)
+    qclient.remove_router_from_l3_agent(agent['id'], router_id)
+    LOG.debug("Removed router from agent=%s" % agent['id'])
 
     # ensure it is removed or log an error
-    if router_id in list_routers_on_l3_agent(qclient, agent_id):
+    if router_id in list_routers_on_l3_agent(qclient, agent['id']):
         raise RuntimeError("Failed to remove router_id=%s from agent_id=%s" %
-                           (router_id, agent_id))
+                           (router_id, agent['id']))
 
     # add the router id to a live agent
     router_body = {'router_id': router_id}
-    qclient.add_router_to_l3_agent(target_id, router_body)
+    qclient.add_router_to_l3_agent(target['id'], router_body)
 
     # ensure it is removed or log an error
-    if router_id not in list_routers_on_l3_agent(qclient, target_id):
+    if router_id not in list_routers_on_l3_agent(qclient, target['id']):
         raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
-                           (router_id, agent_id))
+                           (router_id, agent['id']))
 
 
 def list_networks(qclient):
@@ -720,14 +723,14 @@ def list_agents(qclient, agent_type=None):
     return resp['agents']
 
 
-def agent_alive_id_list(agent_list, agent_type):
+def list_alive_agents(agent_list, agent_type):
     """
     Return a list of agents that are alive from an API list of agents
 
     :param agent_list: API response for list_agents()
 
     """
-    return [agent['id'] for agent in agent_list
+    return [agent for agent in agent_list
             if agent['agent_type'] == agent_type and
             agent['alive'] is True and
             agent['admin_state_up'] is True]
@@ -753,21 +756,21 @@ def target_agent_list(agent_list, agent_type, exclude_agent_host):
     agent_info = agent_info[0]
     agent_mode = agent_info['configurations']['agent_mode']
 
-    return [agent['id'] for agent in agent_list
+    return [agent for agent in agent_list
             if agent['agent_type'] == agent_type and
             agent['alive'] and
             agent['host'] != exclude_agent_host and
             agent['configurations']['agent_mode'] == agent_mode]
 
 
-def agent_dead_id_list(agent_list, agent_type):
+def list_dead_agents(agent_list, agent_type):
     """
     Return a list of agents that are dead from an API list of agents
 
     :param agent_list: API response for list_agents()
 
     """
-    return [agent['id'] for agent in agent_list
+    return [agent for agent in agent_list
             if agent['agent_type'] == agent_type and agent['alive'] is False]
 
 
