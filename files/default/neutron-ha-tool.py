@@ -94,6 +94,14 @@ def parse_args():
                          'certificate will not be verified against any '
                          'certificate authorities. This option should be used '
                          'with caution.')
+    wait_parser = ap.add_mutually_exclusive_group(required=False)
+    wait_parser.add_argument('--wait-for-ports', action='store_true',
+                    dest='wait_for_ports')
+    wait_parser.add_argument('--no-wait-for-ports', action='store_false',
+                    dest='wait_for_ports',
+                    help='When migrating routers, do not wait for its ports '
+                         'to be ACTIVE again on the target agent.')
+    wait_parser.set_defaults(wait_for_ports=True)
     args = ap.parse_args()
     modes = [
         args.l3_agent_check,
@@ -219,18 +227,18 @@ def run(args):
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
         errors = retry_with_backoff(l3_agent_migrate, args)(
-            qclient, args.noop, args.now)
+            qclient, args.noop, args.now, args.wait_for_ports)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
         errors = retry_with_backoff(l3_agent_evacuate, args)(
-            qclient, args.l3_agent_evacuate, args.noop)
+            qclient, args.l3_agent_evacuate, args.noop, args.wait_for_ports)
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
         errors = retry_with_backoff(l3_agent_rebalance, args)(
-            qclient, args.noop)
+            qclient, args.noop, args.wait_for_ports)
 
     elif args.replicate_dhcp:
         LOG.info("Performing DHCP Replication of Networks to Agents")
@@ -239,7 +247,7 @@ def run(args):
     return 1 if errors > 0 else 0
 
 
-def l3_agent_rebalance(qclient, noop=False):
+def l3_agent_rebalance(qclient, noop=False, wait_for_ports=True):
     """
     Rebalance l3 agent router count across agents.  The number of routers
     on each l3 agent will be as close as possible which should help
@@ -318,7 +326,8 @@ def l3_agent_rebalance(qclient, noop=False):
 
             if migrate_router_safely(qclient, noop, router_id,
                                      l3_agent_dict[hgh_agent_id],
-                                     l3_agent_dict[low_agent_id]):
+                                     l3_agent_dict[low_agent_id],
+                                     wait_for_ports):
                 low_agent_router_count += 1
                 hgh_agent_router_count -= 1
                 migrations += 1
@@ -369,7 +378,7 @@ def l3_agent_check(qclient):
     return migration_count
 
 
-def l3_agent_migrate(qclient, noop=False, now=False):
+def l3_agent_migrate(qclient, noop=False, now=False, wait_for_ports=True):
     """
     Walk the l3 agents searching for agents that are offline.  For those that
     are offline, we will retrieve a list of routers on them and migrate them to
@@ -421,7 +430,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     for agent in agent_dead_list:
         (migrations, errors) = \
             migrate_l3_routers_from_agent(
-                qclient, agent, agent_alive_list, noop)
+                qclient, agent, agent_alive_list, noop, wait_for_ports)
         total_migrations += migrations
         total_errors += errors
 
@@ -433,7 +442,7 @@ def l3_agent_migrate(qclient, noop=False, now=False):
     return total_errors
 
 
-def l3_agent_evacuate(qclient, agent_host, noop=False):
+def l3_agent_evacuate(qclient, agent_host, noop=False, wait_for_ports=True):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
     to another agent.
@@ -464,7 +473,7 @@ def l3_agent_evacuate(qclient, agent_host, noop=False):
 
     (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
-                                      target_list, noop)
+                                      target_list, noop, wait_for_ports)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
@@ -519,7 +528,8 @@ def replicate_dhcp(qclient, noop=False):
     return errors
 
 
-def migrate_l3_routers_from_agent(qclient, agent, targets, noop):
+def migrate_l3_routers_from_agent(qclient, agent, targets,
+                                  noop, wait_for_ports):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
 
@@ -527,8 +537,8 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, noop):
     errors = 0
     for router_id in router_id_list:
         target = random.choice(targets)
-        if migrate_router_safely(qclient, noop,
-                                 router_id, agent, target):
+        if migrate_router_safely(qclient, noop, router_id,
+                                 agent, target, wait_for_ports):
             migrations += 1
         else:
             errors += 1
@@ -536,14 +546,15 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, noop):
     return (migrations, errors)
 
 
-def migrate_router_safely(qclient, noop, router_id, agent, target):
+def migrate_router_safely(qclient, noop, router_id, agent,
+                          target, wait_for_ports):
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
                  "to agent=%s", router_id, agent['id'], target['id'])
         return True
 
     try:
-        migrate_router(qclient, router_id, agent, target)
+        migrate_router(qclient, router_id, agent, target, wait_for_ports)
         return True
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
@@ -551,7 +562,7 @@ def migrate_router_safely(qclient, noop, router_id, agent, target):
         return False
 
 
-def migrate_router(qclient, router_id, agent, target):
+def migrate_router(qclient, router_id, agent, target, wait_for_ports):
     """
     Returns nothing, and raises exceptions on errors.
 
@@ -585,6 +596,53 @@ def migrate_router(qclient, router_id, agent, target):
     if router_id not in list_routers_on_l3_agent(qclient, target['id']):
         raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
                            (router_id, agent['id']))
+    if wait_for_ports:
+        wait_router_ports_active(qclient, router_id, target['host'])
+
+
+def wait_router_ports_active(qclient, router_id, target_host, maxtries=60):
+    """
+    Returns nothing. Waits for all non-distributed ports of a router
+    for being in the ACTIVE status on a specific host
+
+    :param qclient: A neutron client
+    :param router_id: The id of the router to check
+    :param target_host: The host on which the ports should be ACTIVE
+                        (reflected by the binding:host_id attribute of
+                        a port)
+    :param maxtries: Maximum number of times the ports' status is polled,
+                     an expection is raised there are still ports with a
+                     non ACTIVE status after that.
+    """
+
+    LOG.info("Wait for the ports of router_id=%s to be ACTIVE", router_id)
+    remaining = ["dummy"]
+    while maxtries:
+        if remaining:
+            router_port_list = qclient.list_ports(device_id=router_id,
+                                                  fields=['id',
+                                                          'status',
+                                                          'binding:host_id',
+                                                          'binding:vif_type'])
+            remaining = [
+                port['id'] for port in router_port_list['ports']
+                if (port['binding:vif_type'] != 'distributed' and
+                    not (port['status'] == 'ACTIVE' and
+                         port['binding:host_id'] == target_host))
+            ]
+            LOG.debug("Ports not ACTIVE on router_id=%s: [%s]",
+                      router_id, ", ".join(remaining))
+
+        if remaining:
+            maxtries -= 1
+            if maxtries:
+                time.sleep(1)
+        else:
+            break
+
+    if remaining:
+        raise RuntimeError("Some ports are not ACTIVE on router_id=%s: [%s]" %
+                           (router_id, ", ".join(remaining)))
 
 
 def list_networks(qclient):
