@@ -30,6 +30,8 @@ import random
 import retrying
 import sys
 import time
+import paramiko
+import socket
 
 from neutronclient.common.exceptions import NeutronException
 from neutronclient.neutron import client as nclient
@@ -94,6 +96,14 @@ def parse_args():
                          'certificate will not be verified against any '
                          'certificate authorities. This option should be used '
                          'with caution.')
+    ap.add_argument('--ssh-delete-namespace', action='store_true',
+                    default=False,
+                    help='After migrating a router, try to ssh to '
+                         'the node the router was migrated from and '
+                         'delete the router\'s network namespace. This '
+                         'is mainly useful when evacuating routers from '
+                         'a node where the l3-agent is not running for '
+                         'some reason.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                     dest='wait_for_router')
@@ -228,13 +238,15 @@ def run(args):
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
         errors = retry_with_backoff(l3_agent_migrate, args)(
-            qclient, args.noop, args.now, args.wait_for_router)
+            qclient, args.noop, args.now, args.wait_for_router,
+            args.ssh_delete_namespace)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
         errors = retry_with_backoff(l3_agent_evacuate, args)(
-            qclient, args.l3_agent_evacuate, args.noop, args.wait_for_router)
+            qclient, args.l3_agent_evacuate, args.noop,
+            args.wait_for_router, args.ssh_delete_namespace)
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
@@ -379,7 +391,8 @@ def l3_agent_check(qclient):
     return migration_count
 
 
-def l3_agent_migrate(qclient, noop=False, now=False, wait_for_router=True):
+def l3_agent_migrate(qclient, noop=False, now=False,
+                     wait_for_router=True, ssh_delete_namespace=False):
     """
     Walk the l3 agents searching for agents that are offline.  For those that
     are offline, we will retrieve a list of routers on them and migrate them to
@@ -430,8 +443,9 @@ def l3_agent_migrate(qclient, noop=False, now=False, wait_for_router=True):
     total_migrations = 0
     for agent in agent_dead_list:
         (migrations, errors) = \
-            migrate_l3_routers_from_agent(
-                qclient, agent, agent_alive_list, noop, wait_for_router)
+            migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
+                                          noop, wait_for_router,
+                                          ssh_delete_namespace)
         total_migrations += migrations
         total_errors += errors
 
@@ -443,7 +457,8 @@ def l3_agent_migrate(qclient, noop=False, now=False, wait_for_router=True):
     return total_errors
 
 
-def l3_agent_evacuate(qclient, agent_host, noop=False, wait_for_router=True):
+def l3_agent_evacuate(qclient, agent_host, noop=False,
+                      wait_for_router=True, ssh_delete_namespace=False):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
     to another agent.
@@ -474,7 +489,8 @@ def l3_agent_evacuate(qclient, agent_host, noop=False, wait_for_router=True):
 
     (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
-                                      target_list, noop, wait_for_router)
+                                      target_list, noop, wait_for_router,
+                                      ssh_delete_namespace)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
@@ -530,7 +546,7 @@ def replicate_dhcp(qclient, noop=False):
 
 
 def migrate_l3_routers_from_agent(qclient, agent, targets,
-                                  noop, wait_for_router):
+                                  noop, wait_for_router, delete_namespace):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
 
@@ -538,8 +554,8 @@ def migrate_l3_routers_from_agent(qclient, agent, targets,
     errors = 0
     for router_id in router_id_list:
         target = random.choice(targets)
-        if migrate_router_safely(qclient, noop, router_id,
-                                 agent, target, wait_for_router):
+        if migrate_router_safely(qclient, noop, router_id, agent,
+                                 target, wait_for_router, delete_namespace):
             migrations += 1
         else:
             errors += 1
@@ -547,15 +563,16 @@ def migrate_l3_routers_from_agent(qclient, agent, targets,
     return (migrations, errors)
 
 
-def migrate_router_safely(qclient, noop, router_id, agent,
-                          target, wait_for_router):
+def migrate_router_safely(qclient, noop, router_id, agent, target,
+                          wait_for_router=True, delete_namespace=False):
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
                  "to agent=%s", router_id, agent['id'], target['id'])
         return True
 
     try:
-        migrate_router(qclient, router_id, agent, target, wait_for_router)
+        migrate_router(qclient, router_id, agent, target,
+                       wait_for_router, delete_namespace)
         return True
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
@@ -563,7 +580,8 @@ def migrate_router_safely(qclient, noop, router_id, agent,
         return False
 
 
-def migrate_router(qclient, router_id, agent, target, wait_for_router):
+def migrate_router(qclient, router_id, agent, target,
+                   wait_for_router=True, delete_namespace=False):
     """
     Returns nothing, and raises exceptions on errors.
 
@@ -599,6 +617,9 @@ def migrate_router(qclient, router_id, agent, target, wait_for_router):
                            (router_id, agent['id']))
     if wait_for_router:
         wait_router_migrated(qclient, router_id, target['host'])
+
+    if delete_namespace:
+        ssh_delete_router_namespace(agent['host'], router_id)
 
 
 def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
@@ -660,6 +681,40 @@ def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
         raise RuntimeError("Some floating ips are not ACTIVE "
                            "on router_id=%s: [%s]" %
                            (router_id, ", ".join(remaining_fips)))
+
+
+def ssh_delete_router_namespace(target_host, router_id):
+    namespace = "qrouter-" + router_id
+    command = "ip netns delete " + namespace
+
+    with paramiko.SSHClient() as ssh_client:
+        # Accept unknown host keys (reflects a "StrictHostKeyChecking no"
+        # setting in the ssh_config)
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.load_system_host_keys()
+
+        try:
+            ssh_client.connect(target_host, timeout=10)
+            stdin, stdout, stderr = ssh_client.exec_command(command,
+                                                            timeout=10,
+                                                            get_pty=True)
+            out_lines = stdout.readlines()
+            err_lines = stderr.readlines()
+            rc = stdout.channel.recv_exit_status()
+            ssh_client.close()
+
+            if rc != 0:
+                LOG.warn("Failed to delete namespace %s delete on %s",
+                         namespace, target_host)
+                LOG.warn("SSH stdout: %s", "".join(out_lines))
+                LOG.warn("SSH stderr: %s", "".join(err_lines))
+            else:
+                LOG.info("namespace %s deleted on %s", namespace, target_host)
+
+        except socket.timeout:
+            LOG.warn("SSH timeout exceeded. "
+                     "Failed to delete namespace %s on %s.",
+                     namespace, target_host)
 
 
 def list_networks(qclient):
