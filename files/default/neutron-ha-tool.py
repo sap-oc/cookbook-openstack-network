@@ -620,7 +620,8 @@ def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
              "to be ACTIVE", router_id)
     remaining_ports = ["dummy"]
     remaining_fips = ["dummy"]
-    while maxtries:
+    remaining_iterations = maxtries
+    while remaining_iterations:
         if remaining_ports:
             router_port_list = qclient.list_ports(device_id=router_id,
                                                   fields=['id',
@@ -635,19 +636,22 @@ def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
             ]
             LOG.debug("Ports not ACTIVE on router_id=%s: [%s]",
                       router_id, ", ".join(remaining_ports))
+            if not remaining_ports:
+                # avoid an unneeded sleep when all ports back and before
+                # starting to check the floating IPs
+                continue
         elif remaining_fips:
             floating_ips = qclient.list_floatingips(router_id=router_id)
             remaining_fips = [fip['id'] for fip in floating_ips['floatingips']
                               if fip['status'] != 'ACTIVE']
             LOG.debug("Floating IPs not active: [%s]",
                       ", ".join(remaining_fips))
+            if not remaining_fips:
+                break
 
-        if remaining_ports or remaining_fips:
-            maxtries -= 1
-            if maxtries:
-                time.sleep(1)
-        else:
-            break
+        remaining_iterations -= 1
+        if remaining_iterations:
+            time.sleep(1)
 
     if remaining_ports:
         raise RuntimeError("Some ports are not ACTIVE on router_id=%s: [%s]" %
