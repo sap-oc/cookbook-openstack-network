@@ -552,8 +552,9 @@ def migrate_l3_routers_from_agent(qclient, agent, targets,
 
     migrations = 0
     errors = 0
+    agent_picker = RandomAgentPicker(targets)
     for router_id in router_id_list:
-        target = random.choice(targets)
+        target = agent_picker.pick()
         if migrate_router_safely(qclient, noop, router_id, agent,
                                  target, wait_for_router, delete_namespace):
             migrations += 1
@@ -902,6 +903,14 @@ def list_dead_agents(agent_list, agent_type):
     """
     return [agent for agent in agent_list
             if agent['agent_type'] == agent_type and agent['alive'] is False]
+
+
+class RandomAgentPicker(object):
+    def __init__(self, agents):
+        self.agents = agents
+
+    def pick(self):
+        return random.choice(self.agents)
 
 
 if __name__ == '__main__':
