@@ -107,10 +107,11 @@ def parse_args():
                          'is mainly useful when evacuating routers from '
                          'a node where the l3-agent is not running for '
                          'some reason.')
-    ap.add_argument('--agent-selection-mode', choices=['random'],
-                    default='random',
+    ap.add_argument('--agent-selection-mode', choices=['random', 'least-busy'],
+                    default='least-busy',
                     help='Determines how target agent is selected for routers '
-                         '"random" selects target agent randomly.')
+                         '"random" selects target agent randomly, '
+                         '"least-busy" selects the least busy agent.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                              dest='wait_for_router')
@@ -237,6 +238,8 @@ def run(args):
 
     if args.agent_selection_mode == 'random':
         Configuration.agent_picker_class = RandomAgentPicker
+    elif args.agent_selection_mode == 'least-busy':
+        Configuration.agent_picker_class = LeastBusyAgentPicker
     else:
         raise ValueError('Invalid agent_selection_mode')
 
@@ -564,7 +567,7 @@ def migrate_l3_routers_from_agent(qclient, agent, targets,
 
     migrations = 0
     errors = 0
-    agent_picker = Configuration.agent_picker_class(targets)
+    agent_picker = Configuration.agent_picker_class(qclient, targets)
     for router_id in router_id_list:
         target = agent_picker.pick()
         if migrate_router_safely(qclient, noop, router_id, agent,
@@ -918,7 +921,7 @@ def list_dead_agents(agent_list, agent_type):
 
 
 class RandomAgentPicker(object):
-    def __init__(self, agents):
+    def __init__(self, qclient, agents):
         self.agents = agents
 
     def pick(self):
@@ -964,7 +967,7 @@ class Configuration(object):
     Registry for storing application's configuration
     """
 
-    agent_picker_class = RandomAgentPicker
+    agent_picker_class = LeastBusyAgentPicker
 
 
 if __name__ == '__main__':
