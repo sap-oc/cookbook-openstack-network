@@ -1,0 +1,5 @@
+coverage
+
+retrying
+python-neutronclient
+python-keystoneclient
