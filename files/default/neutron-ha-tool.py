@@ -23,6 +23,7 @@
 
 import argparse
 from collections import OrderedDict
+import datetime
 import logging
 from logging.handlers import SysLogHandler
 import os
@@ -52,6 +53,8 @@ IDENTITY_API_VERSIONS = {
     '2': kclientv2,
     '3': kclientv3
 }
+
+ROUTER_CACHE_MAX_AGE_SECONDS = 5 * 60
 
 
 def parse_args():
@@ -920,6 +923,40 @@ class RandomAgentPicker(object):
 
     def pick(self):
         return random.choice(self.agents)
+
+
+class LeastBusyAgentPicker(object):
+    def __init__(self, qclient, agents):
+        self.cache_created_at = None
+        self.qclient = qclient
+        self.agents_by_id = {agent['id']: agent for agent in agents}
+        self.router_count_per_agent_id = {}
+        self.refresh_router_count_per_agent_id()
+
+    def refresh_router_count_per_agent_id(self):
+        LOG.info("Refreshing router count per agent cache")
+        self.router_count_per_agent_id = dict()
+        for agent_id in self.agents_by_id:
+            self.router_count_per_agent_id[agent_id] = len(
+                list_routers_on_l3_agent(self.qclient, agent_id)
+            )
+        self.cache_created_at = datetime.datetime.now()
+
+    def cache_expired(self):
+        cache_life = datetime.datetime.now() - self.cache_created_at
+        return cache_life.total_seconds() > ROUTER_CACHE_MAX_AGE_SECONDS
+
+    def pick(self):
+        if self.cache_expired():
+            self.refresh_router_count_per_agent_id()
+
+        agent_id_number_of_routers = sorted(
+            self.router_count_per_agent_id.items(),
+            key=lambda x: (x[1], x[0])
+        )
+        agent_id = agent_id_number_of_routers[0][0]
+        self.router_count_per_agent_id[agent_id] += 1
+        return self.agents_by_id[agent_id]
 
 
 class Configuration(object):
