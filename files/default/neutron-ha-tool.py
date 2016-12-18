@@ -104,6 +104,10 @@ def parse_args():
                          'is mainly useful when evacuating routers from '
                          'a node where the l3-agent is not running for '
                          'some reason.')
+    ap.add_argument('--agent-selection-mode', choices=['random'],
+                    default='random',
+                    help='Determines how target agent is selected for routers '
+                         '"random" selects target agent randomly.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                              dest='wait_for_router')
@@ -227,6 +231,11 @@ def run(args):
 
     # set json return type
     qclient.format = 'json'
+
+    if args.agent_selection_mode == 'random':
+        Configuration.agent_picker_class = RandomAgentPicker
+    else:
+        raise ValueError('Invalid agent_selection_mode')
 
     if args.l3_agent_check:
         LOG.info("Performing L3 Agent Health Check")
@@ -552,7 +561,7 @@ def migrate_l3_routers_from_agent(qclient, agent, targets,
 
     migrations = 0
     errors = 0
-    agent_picker = RandomAgentPicker(targets)
+    agent_picker = Configuration.agent_picker_class(targets)
     for router_id in router_id_list:
         target = agent_picker.pick()
         if migrate_router_safely(qclient, noop, router_id, agent,
@@ -911,6 +920,14 @@ class RandomAgentPicker(object):
 
     def pick(self):
         return random.choice(self.agents)
+
+
+class Configuration(object):
+    """
+    Registry for storing application's configuration
+    """
+
+    agent_picker_class = RandomAgentPicker
 
 
 if __name__ == '__main__':
