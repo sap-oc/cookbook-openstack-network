@@ -564,6 +564,7 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   noop, wait_for_router, delete_namespace):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
+    router_id_list = NullRouterFilter().filter_routers(router_id_list)
 
     migrations = 0
     errors = 0
@@ -966,6 +967,11 @@ class LeastBusyAgentPicker(object):
         agent_id = agent_id_number_of_routers[0][0]
         self.router_count_per_agent_id[agent_id] += 1
         return self.agents_by_id[agent_id]
+
+
+class NullRouterFilter(object):
+    def filter_routers(self, router_id_list):
+        return router_id_list
 
 
 if __name__ == '__main__':
