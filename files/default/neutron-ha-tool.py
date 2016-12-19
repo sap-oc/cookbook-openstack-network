@@ -1007,6 +1007,40 @@ def load_router_ids(path):
     return router_ids
 
 
+class AgentIdBasedAgentPicker(object):
+    def __init__(self, agent_id):
+        self.agents = []
+        self.agent_id = agent_id
+
+    def set_agents(self, agents):
+        self.agents = agents
+
+    def pick(self):
+        for agent in self.agents:
+            if agent.get('id') == self.agent_id:
+                return agent
+        raise IndexError(
+            'Cannot find agent with agent id: {}'.format(self.agent_id)
+        )
+
+
+class HostBasedAgentPicker(object):
+    def __init__(self, host):
+        self.agents = []
+        self.host = host
+
+    def set_agents(self, agents):
+        self.agents = agents
+
+    def pick(self):
+        for agent in self.agents:
+            if agent.get('host') == self.host:
+                return agent
+        raise IndexError(
+            'Cannot find agent with host: {}'.format(self.host)
+        )
+
+
 if __name__ == '__main__':
     args = parse_args()
     setup_logging(args)
