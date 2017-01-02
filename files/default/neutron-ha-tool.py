@@ -106,12 +106,12 @@ def parse_args():
                          'some reason.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
-                    dest='wait_for_router')
+                             dest='wait_for_router')
     wait_parser.add_argument('--no-wait-for-router', action='store_false',
-                    dest='wait_for_router',
-                    help='When migrating routers, do not wait for its ports and '
-                         'floating IPs to be ACTIVE again on the target '
-                         'agent.')
+                             dest='wait_for_router',
+                             help='When migrating routers, do not wait for '
+                                  'its ports and floating IPs to be ACTIVE '
+                                  'again on the target agent.')
     wait_parser.set_defaults(wait_for_router=True)
     args = ap.parse_args()
     modes = [
@@ -307,8 +307,8 @@ def l3_agent_rebalance(qclient, noop=False, wait_for_router=True):
         routers_on_l3_agent_dict[l3_agent['id']] = \
             list_routers_on_l3_agent(qclient, l3_agent['id'])
 
-    ordered_l3_agent_dict = OrderedDict(sorted(routers_on_l3_agent_dict.items(),
-                                               key=lambda t: len(t[0])))
+    ordered_l3_agent_dict = OrderedDict(
+        sorted(routers_on_l3_agent_dict.items(), key=lambda t: len(t[0])))
     ordered_l3_agent_list = list(ordered_l3_agent_dict)
     num_agents = len(ordered_l3_agent_list)
     LOG.info("Agent list: %s",
@@ -764,7 +764,7 @@ def list_routers(qclient):
     resp = qclient.list_routers()
     LOG.debug("list_routers: %s", resp)
     # Filter routers to not include HA routers
-    return [i for i in resp['routers'] if not i.get('ha') == True]
+    return [i for i in resp['routers'] if not i.get('ha') == True]  # noqa
 
 
 def list_routers_on_l3_agent(qclient, agent_id):
@@ -776,7 +776,7 @@ def list_routers_on_l3_agent(qclient, agent_id):
 
     resp = qclient.list_routers_on_l3_agent(agent_id)
     LOG.debug("list_routers_on_l3_agent: %s", resp)
-    return [r['id'] for r in resp['routers'] if not r.get('ha') == True]
+    return [r['id'] for r in resp['routers'] if not r.get('ha') == True]  # noqa
 
 
 def list_agents(qclient, agent_type=None):
