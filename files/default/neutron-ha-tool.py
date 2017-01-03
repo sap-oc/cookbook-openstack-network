@@ -117,6 +117,12 @@ def parse_args():
                          'moved. The router list file should specify one '
                          'router id per line. This only applies for '
                          'agent evacuation.')
+    ap.add_argument('--target-agent-id', default=None,
+                    help='Explicitly select a target agent by specifying an '
+                         'agent id.')
+    ap.add_argument('--target-host', default=None,
+                    help='Explicitly select a target agent by specifying its '
+                         'host.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                              dest='wait_for_router')
@@ -247,6 +253,11 @@ def run(args):
         agent_picker = LeastBusyAgentPicker(qclient)
     else:
         raise ValueError('Invalid agent_selection_mode')
+
+    if args.target_agent_id:
+        agent_picker = AgentIdBasedAgentPicker(args.target_agent_id)
+    if args.target_host:
+        agent_picker = HostBasedAgentPicker(args.target_host)
 
     if args.l3_agent_check:
         LOG.info("Performing L3 Agent Health Check")
