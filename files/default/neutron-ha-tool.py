@@ -237,9 +237,9 @@ def run(args):
     qclient.format = 'json'
 
     if args.agent_selection_mode == 'random':
-        agent_picker_class = RandomAgentPicker
+        agent_picker = RandomAgentPicker()
     elif args.agent_selection_mode == 'least-busy':
-        agent_picker_class = LeastBusyAgentPicker
+        agent_picker = LeastBusyAgentPicker(qclient)
     else:
         raise ValueError('Invalid agent_selection_mode')
 
@@ -253,14 +253,14 @@ def run(args):
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
         errors = retry_with_backoff(l3_agent_migrate, args)(
-            qclient, agent_picker_class, args.noop, args.now,
+            qclient, agent_picker, args.noop, args.now,
             args.wait_for_router, args.ssh_delete_namespace)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
         errors = retry_with_backoff(l3_agent_evacuate, args)(
-            qclient, args.l3_agent_evacuate, agent_picker_class, args.noop,
+            qclient, args.l3_agent_evacuate, agent_picker, args.noop,
             args.wait_for_router, args.ssh_delete_namespace)
 
     elif args.l3_agent_rebalance:
@@ -406,7 +406,7 @@ def l3_agent_check(qclient):
     return migration_count
 
 
-def l3_agent_migrate(qclient, agent_picker_class, noop=False, now=False,
+def l3_agent_migrate(qclient, agent_picker, noop=False, now=False,
                      wait_for_router=True, ssh_delete_namespace=False):
     """
     Walk the l3 agents searching for agents that are offline.  For those that
@@ -459,7 +459,7 @@ def l3_agent_migrate(qclient, agent_picker_class, noop=False, now=False,
     for agent in agent_dead_list:
         (migrations, errors) = \
             migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
-                                          agent_picker_class, noop, wait_for_router,
+                                          agent_picker, noop, wait_for_router,
                                           ssh_delete_namespace)
         total_migrations += migrations
         total_errors += errors
@@ -472,7 +472,7 @@ def l3_agent_migrate(qclient, agent_picker_class, noop=False, now=False,
     return total_errors
 
 
-def l3_agent_evacuate(qclient, agent_host, agent_picker_class, noop=False,
+def l3_agent_evacuate(qclient, agent_host, agent_picker, noop=False,
                       wait_for_router=True, ssh_delete_namespace=False):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
@@ -504,7 +504,7 @@ def l3_agent_evacuate(qclient, agent_host, agent_picker_class, noop=False,
 
     (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
-                                      target_list, agent_picker_class, noop,
+                                      target_list, agent_picker, noop,
                                       wait_for_router, ssh_delete_namespace)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
@@ -560,14 +560,14 @@ def replicate_dhcp(qclient, noop=False):
     return errors
 
 
-def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker_class,
+def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   noop, wait_for_router, delete_namespace):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
 
     migrations = 0
     errors = 0
-    agent_picker = agent_picker_class(qclient, targets)
+    agent_picker.set_agents(targets)
     for router_id in router_id_list:
         target = agent_picker.pick()
         if migrate_router_safely(qclient, noop, router_id, agent,
@@ -921,7 +921,10 @@ def list_dead_agents(agent_list, agent_type):
 
 
 class RandomAgentPicker(object):
-    def __init__(self, qclient, agents):
+    def __init__(self):
+        self.agents = []
+
+    def set_agents(self, agents):
         self.agents = agents
 
     def pick(self):
@@ -929,16 +932,19 @@ class RandomAgentPicker(object):
 
 
 class LeastBusyAgentPicker(object):
-    def __init__(self, qclient, agents):
+    def __init__(self, qclient):
         self.cache_created_at = None
         self.qclient = qclient
-        self.agents_by_id = {agent['id']: agent for agent in agents}
+        self.agents_by_id = {}
         self.router_count_per_agent_id = {}
+
+    def set_agents(self, agents):
+        self.agents_by_id = {agent['id']: agent for agent in agents}
         self.refresh_router_count_per_agent_id()
 
     def refresh_router_count_per_agent_id(self):
         LOG.info("Refreshing router count per agent cache")
-        self.router_count_per_agent_id = dict()
+        self.router_count_per_agent_id = {}
         for agent_id in self.agents_by_id:
             self.router_count_per_agent_id[agent_id] = len(
                 list_routers_on_l3_agent(self.qclient, agent_id)

@@ -122,7 +122,7 @@ class TestL3AgentMigrate(unittest.TestCase):
         neutron_client.tst_add_router('dead-agent-0', 'router-1', {})
 
         result = ha_tool.l3_agent_migrate(
-            neutron_client, ha_tool.RandomAgentPicker, now=True)
+            neutron_client, ha_tool.RandomAgentPicker(), now=True)
 
         self.assertEqual(0, result)
         self.assertEqual(
@@ -145,7 +145,7 @@ class TestL3AgentEvacuate(unittest.TestCase):
         neutron_client.tst_add_router('live-agent-0', 'router', {})
 
         result = ha_tool.l3_agent_evacuate(
-            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker)
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker())
 
         self.assertEqual(0, result)
         self.assertEqual(
@@ -161,13 +161,14 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         self.neutron_client = neutron_client
 
     def make_picker(self):
-        return ha_tool.LeastBusyAgentPicker(
-            self.neutron_client,
+        picker = ha_tool.LeastBusyAgentPicker(self.neutron_client)
+        picker.set_agents(
             [
                 {'id': 'live-agent-0'},
                 {'id': 'live-agent-1'}
             ]
         )
+        return picker
 
     def test_initial_numbers_queried(self):
         self.neutron_client.tst_add_router('live-agent-0', 'router', {})
@@ -241,7 +242,8 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
     def test_pick_on_empty_array_throws_index_error_as_random_does(self):
-        picker = ha_tool.LeastBusyAgentPicker(self.neutron_client, [])
+        picker = ha_tool.LeastBusyAgentPicker(self.neutron_client)
+        picker.set_agents([])
 
         with self.assertRaises(IndexError):
             picker.pick()
