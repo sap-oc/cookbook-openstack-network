@@ -102,14 +102,18 @@ class TestL3AgentMigrate(unittest.TestCase):
     def test_no_dead_agents_returns_zero(self):
         neutron_client = make_neturon_client(live_agents=2)
 
-        result = ha_tool.l3_agent_migrate(neutron_client)
+        # None as Agent Picker - given no dead agents, no migration, and
+        # therefore no agent picking will take place
+        result = ha_tool.l3_agent_migrate(neutron_client, None)
 
         self.assertEqual(0, result)
 
     def test_no_alive_agents_returns_one(self):
         neutron_client = make_neturon_client(dead_agents=2)
 
-        result = ha_tool.l3_agent_migrate(neutron_client)
+        # None as Agent Picker - given no live agents, no migration, and
+        # therefore no agent picking will take place
+        result = ha_tool.l3_agent_migrate(neutron_client, None)
 
         self.assertEqual(1, result)
 
@@ -117,7 +121,8 @@ class TestL3AgentMigrate(unittest.TestCase):
         neutron_client = make_neturon_client(live_agents=1, dead_agents=1)
         neutron_client.tst_add_router('dead-agent-0', 'router-1', {})
 
-        result = ha_tool.l3_agent_migrate(neutron_client, now=True)
+        result = ha_tool.l3_agent_migrate(
+            neutron_client, ha_tool.RandomAgentPicker, now=True)
 
         self.assertEqual(0, result)
         self.assertEqual(
@@ -128,7 +133,10 @@ class TestL3AgentEvacuate(unittest.TestCase):
 
     def test_no_agents_returns_zero(self):
         neutron_client = MockNeutronClient()
-        result = ha_tool.l3_agent_evacuate(neutron_client, 'host1')
+
+        # None as Agent Picker - given no agents, no migration, and therefore no
+        # agent picking will take place
+        result = ha_tool.l3_agent_evacuate(neutron_client, 'host1', None)
 
         self.assertEqual(0, result)
 
@@ -136,7 +144,8 @@ class TestL3AgentEvacuate(unittest.TestCase):
         neutron_client = make_neturon_client(live_agents=2)
         neutron_client.tst_add_router('live-agent-0', 'router', {})
 
-        result = ha_tool.l3_agent_evacuate(neutron_client, 'live-agent-0-host')
+        result = ha_tool.l3_agent_evacuate(
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker)
 
         self.assertEqual(0, result)
         self.assertEqual(
