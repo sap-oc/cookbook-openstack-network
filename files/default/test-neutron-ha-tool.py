@@ -99,55 +99,55 @@ def make_neutron_client(live_agents=0, dead_agents=0):
 
 class TestL3AgentMigrate(unittest.TestCase):
 
-    def test_no_dead_agents_returns_zero(self):
+    def test_no_dead_agents_migrate_returns_without_errors(self):
         neutron_client = make_neutron_client(live_agents=2)
 
         # None as Agent Picker - given no dead agents, no migration, and
         # therefore no agent picking will take place
-        result = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
 
-        self.assertEqual(0, result)
+        self.assertEqual(0, error_count)
 
-    def test_no_alive_agents_returns_one(self):
+    def test_no_live_agents_migrate_returns_with_error(self):
         neutron_client = make_neutron_client(dead_agents=2)
 
         # None as Agent Picker - given no live agents, no migration, and
         # therefore no agent picking will take place
-        result = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
 
-        self.assertEqual(1, result)
+        self.assertEqual(1, error_count)
 
-    def test_router_moved(self):
+    def test_migrate_from_dead_agent_moves_routers_and_returns_no_errors(self):
         neutron_client = make_neutron_client(live_agents=1, dead_agents=1)
         neutron_client.tst_add_router('dead-agent-0', 'router-1', {})
 
-        result = ha_tool.l3_agent_migrate(
+        error_count = ha_tool.l3_agent_migrate(
             neutron_client, ha_tool.RandomAgentPicker(), now=True)
 
-        self.assertEqual(0, result)
+        self.assertEqual(0, error_count)
         self.assertEqual(
             set(['router-1']), neutron_client.routers_by_agent['live-agent-0'])
 
 
 class TestL3AgentEvacuate(unittest.TestCase):
 
-    def test_no_agents_returns_zero(self):
+    def test_evacuate_without_agents_returns_no_errors(self):
         neutron_client = MockNeutronClient()
 
         # None as Agent Picker - given no agents, no migration, and therefore no
         # agent picking will take place
-        result = ha_tool.l3_agent_evacuate(neutron_client, 'host1', None)
+        error_count = ha_tool.l3_agent_evacuate(neutron_client, 'host1', None)
 
-        self.assertEqual(0, result)
+        self.assertEqual(0, error_count)
 
-    def test_evacuation(self):
+    def test_evacuate_live_agent_moves_routers_and_returns_no_errors(self):
         neutron_client = make_neutron_client(live_agents=2)
         neutron_client.tst_add_router('live-agent-0', 'router', {})
 
-        result = ha_tool.l3_agent_evacuate(
+        error_count = ha_tool.l3_agent_evacuate(
             neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker())
 
-        self.assertEqual(0, result)
+        self.assertEqual(0, error_count)
         self.assertEqual(
             set(['router']),
             neutron_client.routers_by_agent['live-agent-1']
@@ -160,7 +160,7 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         neutron_client = make_neutron_client(live_agents=2)
         self.neutron_client = neutron_client
 
-    def make_picker(self):
+    def make_picker_and_set_agents(self):
         picker = ha_tool.LeastBusyAgentPicker(self.neutron_client)
         picker.set_agents(
             [
@@ -170,9 +170,9 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         )
         return picker
 
-    def test_initial_numbers_queried(self):
+    def test_agent_picker_queries_neutron_for_number_of_routers(self):
         self.neutron_client.tst_add_router('live-agent-0', 'router', {})
-        picker = self.make_picker()
+        picker = self.make_picker_and_set_agents()
 
         self.assertEqual(
             {
@@ -182,15 +182,15 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
             picker.router_count_per_agent_id
         )
 
-    def test_least_busy_picked(self):
+    def test_agent_with_smallest_number_of_routers_picked(self):
         self.neutron_client.tst_add_router('live-agent-0', 'router', {})
-        picker = self.make_picker()
+        picker = self.make_picker_and_set_agents()
 
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
-    def test_router_counts_maintained(self):
+    def test_picking_an_agent_increases_internal_router_counter_per_agent(self):
         self.neutron_client.tst_add_router('live-agent-0', 'router', {})
-        picker = self.make_picker()
+        picker = self.make_picker_and_set_agents()
 
         picked_agent = picker.pick()
         self.assertEqual('live-agent-1', picked_agent['id'])
@@ -203,15 +203,9 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
             picker.router_count_per_agent_id
         )
 
-    def test_routers_picked_evenly(self):
-        picker = self.make_picker()
-
-        self.assertEqual('live-agent-0', picker.pick()['id'])
-        self.assertEqual('live-agent-1', picker.pick()['id'])
-        self.assertEqual('live-agent-0', picker.pick()['id'])
-
-    def test_cache_reloaded(self):
-        picker = self.make_picker()  # This makes the initial query to neutron
+    def test_router_per_agent_cache_updated_when_cache_expired(self):
+        # initializing the picker will also query neutron
+        picker = self.make_picker_and_set_agents()
 
         # Add some routers to live-agent-0 to make sure it's the busyest
         self.neutron_client.tst_add_router('live-agent-0', 'router-2', {})
@@ -227,7 +221,8 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
     def test_cache_reloaded_if_difference_is_a_day(self):
-        picker = self.make_picker()  # This makes the initial query to neutron
+        # initializing the picker will also query neutron
+        picker = self.make_picker_and_set_agents()
 
         # Add some routers to live-agent-0 to make sure it's the busyest
         self.neutron_client.tst_add_router('live-agent-0', 'router-2', {})
