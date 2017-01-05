@@ -109,7 +109,9 @@ class TestL3AgentMigrate(unittest.TestCase):
 
         # None as Agent Picker - given no dead agents, no migration, and
         # therefore no agent picking will take place
-        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(
+            neutron_client, None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
 
@@ -118,7 +120,9 @@ class TestL3AgentMigrate(unittest.TestCase):
 
         # None as Agent Picker - given no live agents, no migration, and
         # therefore no agent picking will take place
-        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(
+            neutron_client, None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(1, error_count)
 
@@ -128,7 +132,9 @@ class TestL3AgentMigrate(unittest.TestCase):
         fake_neutron.add_router('dead-agent-0', 'router-1', {})
 
         error_count = ha_tool.l3_agent_migrate(
-            neutron_client, ha_tool.RandomAgentPicker(), now=True)
+            neutron_client, ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(), now=True
+        )
 
         self.assertEqual(0, error_count)
         self.assertEqual(
@@ -142,7 +148,9 @@ class TestL3AgentEvacuate(unittest.TestCase):
 
         # None as Agent Picker - given no agents, no migration, and therefore no
         # agent picking will take place
-        error_count = ha_tool.l3_agent_evacuate(neutron_client, 'host1', None)
+        error_count = ha_tool.l3_agent_evacuate(
+            neutron_client, 'host1', None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
 
@@ -152,7 +160,9 @@ class TestL3AgentEvacuate(unittest.TestCase):
         fake_neutron.add_router('live-agent-0', 'router', {})
 
         error_count = ha_tool.l3_agent_evacuate(
-            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker())
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
         self.assertEqual(

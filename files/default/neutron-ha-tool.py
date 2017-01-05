@@ -252,16 +252,19 @@ def run(args):
 
     elif args.l3_agent_migrate:
         LOG.info("Performing L3 Agent Migration for Offline L3 Agents")
+        # Move all routers by not filtering them
+        router_filter = NullRouterFilter()
         errors = retry_with_backoff(l3_agent_migrate, args)(
-            qclient, agent_picker, args.noop, args.now,
+            qclient, agent_picker, router_filter, args.noop, args.now,
             args.wait_for_router, args.ssh_delete_namespace)
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
+        router_filter = NullRouterFilter()  # TODO: Make this configurable
         errors = retry_with_backoff(l3_agent_evacuate, args)(
-            qclient, args.l3_agent_evacuate, agent_picker, args.noop,
-            args.wait_for_router, args.ssh_delete_namespace)
+            qclient, args.l3_agent_evacuate, agent_picker, router_filter,
+            args.noop, args.wait_for_router, args.ssh_delete_namespace)
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
@@ -406,8 +409,9 @@ def l3_agent_check(qclient):
     return migration_count
 
 
-def l3_agent_migrate(qclient, agent_picker, noop=False, now=False,
-                     wait_for_router=True, ssh_delete_namespace=False):
+def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
+                     now=False, wait_for_router=True,
+                     ssh_delete_namespace=False):
     """
     Walk the l3 agents searching for agents that are offline.  For those that
     are offline, we will retrieve a list of routers on them and migrate them to
@@ -459,7 +463,8 @@ def l3_agent_migrate(qclient, agent_picker, noop=False, now=False,
     for agent in agent_dead_list:
         (migrations, errors) = \
             migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
-                                          agent_picker, noop, wait_for_router,
+                                          agent_picker, router_filter,
+                                          noop, wait_for_router,
                                           ssh_delete_namespace)
         total_migrations += migrations
         total_errors += errors
@@ -472,8 +477,9 @@ def l3_agent_migrate(qclient, agent_picker, noop=False, now=False,
     return total_errors
 
 
-def l3_agent_evacuate(qclient, agent_host, agent_picker, noop=False,
-                      wait_for_router=True, ssh_delete_namespace=False):
+def l3_agent_evacuate(qclient, agent_host, agent_picker, router_filter,
+                      noop=False, wait_for_router=True,
+                      ssh_delete_namespace=False):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
     to another agent.
@@ -504,8 +510,9 @@ def l3_agent_evacuate(qclient, agent_host, agent_picker, noop=False,
 
     (migrations, errors) = \
         migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
-                                      target_list, agent_picker, noop,
-                                      wait_for_router, ssh_delete_namespace)
+                                      target_list, agent_picker, router_filter,
+                                      noop, wait_for_router,
+                                      ssh_delete_namespace)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
@@ -561,10 +568,11 @@ def replicate_dhcp(qclient, noop=False):
 
 
 def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
-                                  noop, wait_for_router, delete_namespace):
+                                  router_filter, noop, wait_for_router,
+                                  delete_namespace):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
-    router_id_list = NullRouterFilter().filter_routers(router_id_list)
+    router_id_list = router_filter.filter_routers(router_id_list)
 
     migrations = 0
     errors = 0
