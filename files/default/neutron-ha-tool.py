@@ -982,6 +982,14 @@ class NullRouterFilter(object):
         return router_id_list
 
 
+class WhitelistRouterFilter(object):
+    def __init__(self, router_id_whitelist):
+        self.router_id_whitelist = set(router_id_whitelist)
+
+    def filter_routers(self, router_id_list):
+        return list(self.router_id_whitelist & set(router_id_list))
+
+
 def load_router_ids(path):
     router_ids = []
     with open(path, 'r') as router_list_file:

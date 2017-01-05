@@ -288,6 +288,27 @@ class TestLoadRouterIds(unittest.TestCase):
         self.assertEqual(['some-router-id'], router_list)
 
 
+class TestWhitelistRouterFilter(unittest.TestCase):
+
+    def test_empty_white_list_filters_out_all_router_ids(self):
+        router_filter = ha_tool.WhitelistRouterFilter([])
+
+        filtered_router_ids = router_filter.filter_routers(
+            ['router-id-1', 'router-id-2']
+        )
+
+        self.assertEqual([], filtered_router_ids)
+
+    def test_only_whitelisted_routers_returned(self):
+        router_filter = ha_tool.WhitelistRouterFilter(['router-id-1'])
+
+        filtered_router_ids = router_filter.filter_routers(
+            ['router-id-1', 'router-id-2']
+        )
+
+        self.assertEqual(['router-id-1'], filtered_router_ids)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main()
