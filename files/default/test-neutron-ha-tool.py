@@ -6,45 +6,50 @@ import logging
 ha_tool = importlib.import_module("neutron-ha-tool")
 
 
-class MockNeutronClient(object):
-
+class FakeNeutron(object):
     def __init__(self):
         self.routers = {}
         self.agents = {}
         self.routers_by_agent = collections.defaultdict(set)
 
-    def tst_add_agent(self, agent_id, props):
+    def add_agent(self, agent_id, props):
         self.agents[agent_id] = dict(props, id=agent_id)
 
-    def tst_add_router(self, agent_id, router_id, props):
+    def add_router(self, agent_id, router_id, props):
         self.routers[router_id] = dict(props, id=router_id)
         self.routers_by_agent[agent_id].add(router_id)
 
-    def tst_agent_by_router(self, router_id):
+    def agent_by_router(self, router_id):
         for agent_id, router_ids in self.routers_by_agent.items():
             if router_id in router_ids:
                 return self.agents[agent_id]
 
         raise NotImplementedError()
 
+
+class FakeNeutronClient(object):
+    def __init__(self, fake_neutron):
+        self.fake_neutron = fake_neutron
+
     def list_agents(self):
         return {
-            'agents': self.agents.values()
+            'agents': self.fake_neutron.agents.values()
         }
 
     def list_routers_on_l3_agent(self, agent_id):
         return {
             'routers': [
-                self.routers[router_id]
-                for router_id in self.routers_by_agent[agent_id]
+                self.fake_neutron.routers[router_id]
+                for router_id in self.fake_neutron.routers_by_agent[agent_id]
             ]
         }
 
     def remove_router_from_l3_agent(self, agent_id, router_id):
-        self.routers_by_agent[agent_id].remove(router_id)
+        self.fake_neutron.routers_by_agent[agent_id].remove(router_id)
 
     def add_router_to_l3_agent(self, agent_id, router_body):
-        self.routers_by_agent[agent_id].add(router_body['router_id'])
+        self.fake_neutron.routers_by_agent[agent_id].add(
+            router_body['router_id'])
 
     def list_ports(self, device_id, fields):
         return {
@@ -52,7 +57,7 @@ class MockNeutronClient(object):
                 {
                     'id': 'someid',
                     'binding:host_id':
-                        self.tst_agent_by_router(device_id)['host'],
+                        self.fake_neutron.agent_by_router(device_id)['host'],
                     'binding:vif_type': 'non distributed',
                     'status': 'ACTIVE'
                 }
@@ -70,11 +75,11 @@ class MockNeutronClient(object):
         }
 
 
-def make_neutron_client(live_agents=0, dead_agents=0):
-    neutron_client = MockNeutronClient()
+def setup_fake_neutron(live_agents=0, dead_agents=0):
+    fake_neutron = FakeNeutron()
 
     for i in range(live_agents):
-        neutron_client.tst_add_agent(
+        fake_neutron.add_agent(
             'live-agent-{}'.format(i), {
                 'agent_type': 'L3 agent',
                 'alive': True,
@@ -86,7 +91,7 @@ def make_neutron_client(live_agents=0, dead_agents=0):
             }
         )
     for i in range(dead_agents):
-        neutron_client.tst_add_agent(
+        fake_neutron.add_agent(
             'dead-agent-{}'.format(i), {
                 'agent_type': 'L3 agent',
                 'alive': False,
@@ -94,13 +99,13 @@ def make_neutron_client(live_agents=0, dead_agents=0):
                 'host': 'dead-agent-{}-host'.format(i)
             }
         )
-    return neutron_client
+    return fake_neutron
 
 
 class TestL3AgentMigrate(unittest.TestCase):
 
     def test_no_dead_agents_migrate_returns_without_errors(self):
-        neutron_client = make_neutron_client(live_agents=2)
+        neutron_client = FakeNeutronClient(setup_fake_neutron(live_agents=2))
 
         # None as Agent Picker - given no dead agents, no migration, and
         # therefore no agent picking will take place
@@ -109,7 +114,7 @@ class TestL3AgentMigrate(unittest.TestCase):
         self.assertEqual(0, error_count)
 
     def test_no_live_agents_migrate_returns_with_error(self):
-        neutron_client = make_neutron_client(dead_agents=2)
+        neutron_client = FakeNeutronClient(setup_fake_neutron(dead_agents=2))
 
         # None as Agent Picker - given no live agents, no migration, and
         # therefore no agent picking will take place
@@ -118,21 +123,22 @@ class TestL3AgentMigrate(unittest.TestCase):
         self.assertEqual(1, error_count)
 
     def test_migrate_from_dead_agent_moves_routers_and_returns_no_errors(self):
-        neutron_client = make_neutron_client(live_agents=1, dead_agents=1)
-        neutron_client.tst_add_router('dead-agent-0', 'router-1', {})
+        fake_neutron = setup_fake_neutron(live_agents=1, dead_agents=1)
+        neutron_client = FakeNeutronClient(fake_neutron)
+        fake_neutron.add_router('dead-agent-0', 'router-1', {})
 
         error_count = ha_tool.l3_agent_migrate(
             neutron_client, ha_tool.RandomAgentPicker(), now=True)
 
         self.assertEqual(0, error_count)
         self.assertEqual(
-            set(['router-1']), neutron_client.routers_by_agent['live-agent-0'])
+            set(['router-1']), fake_neutron.routers_by_agent['live-agent-0'])
 
 
 class TestL3AgentEvacuate(unittest.TestCase):
 
     def test_evacuate_without_agents_returns_no_errors(self):
-        neutron_client = MockNeutronClient()
+        neutron_client = FakeNeutronClient(FakeNeutron())
 
         # None as Agent Picker - given no agents, no migration, and therefore no
         # agent picking will take place
@@ -141,8 +147,9 @@ class TestL3AgentEvacuate(unittest.TestCase):
         self.assertEqual(0, error_count)
 
     def test_evacuate_live_agent_moves_routers_and_returns_no_errors(self):
-        neutron_client = make_neutron_client(live_agents=2)
-        neutron_client.tst_add_router('live-agent-0', 'router', {})
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        neutron_client = FakeNeutronClient(fake_neutron)
+        fake_neutron.add_router('live-agent-0', 'router', {})
 
         error_count = ha_tool.l3_agent_evacuate(
             neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker())
@@ -150,15 +157,15 @@ class TestL3AgentEvacuate(unittest.TestCase):
         self.assertEqual(0, error_count)
         self.assertEqual(
             set(['router']),
-            neutron_client.routers_by_agent['live-agent-1']
+            fake_neutron.routers_by_agent['live-agent-1']
         )
 
 
 class TestLeastBusyAgentPicker(unittest.TestCase):
 
     def setUp(self):
-        neutron_client = make_neutron_client(live_agents=2)
-        self.neutron_client = neutron_client
+        self.fake_neutron = setup_fake_neutron(live_agents=2)
+        self.neutron_client = FakeNeutronClient(self.fake_neutron)
 
     def make_picker_and_set_agents(self):
         picker = ha_tool.LeastBusyAgentPicker(self.neutron_client)
@@ -171,7 +178,7 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         return picker
 
     def test_agent_picker_queries_neutron_for_number_of_routers(self):
-        self.neutron_client.tst_add_router('live-agent-0', 'router', {})
+        self.fake_neutron.add_router('live-agent-0', 'router', {})
         picker = self.make_picker_and_set_agents()
 
         self.assertEqual(
@@ -183,13 +190,13 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         )
 
     def test_agent_with_smallest_number_of_routers_picked(self):
-        self.neutron_client.tst_add_router('live-agent-0', 'router', {})
+        self.fake_neutron.add_router('live-agent-0', 'router', {})
         picker = self.make_picker_and_set_agents()
 
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
     def test_picking_an_agent_increases_internal_router_counter_per_agent(self):
-        self.neutron_client.tst_add_router('live-agent-0', 'router', {})
+        self.fake_neutron.add_router('live-agent-0', 'router', {})
         picker = self.make_picker_and_set_agents()
 
         picked_agent = picker.pick()
@@ -208,8 +215,8 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         picker = self.make_picker_and_set_agents()
 
         # Add some routers to live-agent-0 to make sure it's the busyest
-        self.neutron_client.tst_add_router('live-agent-0', 'router-2', {})
-        self.neutron_client.tst_add_router('live-agent-0', 'router-3', {})
+        self.fake_neutron.add_router('live-agent-0', 'router-2', {})
+        self.fake_neutron.add_router('live-agent-0', 'router-3', {})
 
         # Emulate that cache has expired
         picker.cache_created_at = (
@@ -225,8 +232,8 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
         picker = self.make_picker_and_set_agents()
 
         # Add some routers to live-agent-0 to make sure it's the busyest
-        self.neutron_client.tst_add_router('live-agent-0', 'router-2', {})
-        self.neutron_client.tst_add_router('live-agent-0', 'router-3', {})
+        self.fake_neutron.add_router('live-agent-0', 'router-2', {})
+        self.fake_neutron.add_router('live-agent-0', 'router-3', {})
 
         # Emulate that cache has expired
         picker.cache_created_at = (
