@@ -112,6 +112,11 @@ def parse_args():
                     help='Determines how target agent is selected for routers '
                          '"random" selects target agent randomly, '
                          '"least-busy" selects the least busy agent.')
+    ap.add_argument('--router-list-file', default=None,
+                    help='Only routers specified in the list file will be '
+                         'moved. The router list file should specify one '
+                         'router id per line. This only applies for '
+                         'agent evacuation.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                              dest='wait_for_router')
@@ -261,7 +266,11 @@ def run(args):
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
                  args.l3_agent_evacuate)
-        router_filter = NullRouterFilter()  # TODO: Make this configurable
+        if args.router_list_file:
+            router_id_whitelist = load_router_ids(args.router_list_file)
+            router_filter = WhitelistRouterFilter(router_id_whitelist)
+        else:
+            router_filter = NullRouterFilter()
         errors = retry_with_backoff(l3_agent_evacuate, args)(
             qclient, args.l3_agent_evacuate, agent_picker, router_filter,
             args.noop, args.wait_for_router, args.ssh_delete_namespace)
