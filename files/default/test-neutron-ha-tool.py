@@ -3,6 +3,7 @@ import unittest
 import collections
 import importlib
 import logging
+import tempfile
 ha_tool = importlib.import_module("neutron-ha-tool")
 
 
@@ -259,6 +260,32 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
 
         with self.assertRaises(IndexError):
             picker.pick()
+
+
+class TestLoadRouterIds(unittest.TestCase):
+
+    def test_loading_empty_file_returns_empty_array(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual([], router_list)
+
+    def test_empty_lines_skipped(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            list_file.write('\n')
+            list_file.write('      ')
+            list_file.seek(0)
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual([], router_list)
+
+    def test_lines_stripped(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            list_file.write('  some-router-id   ')
+            list_file.seek(0)
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual(['some-router-id'], router_list)
 
 
 if __name__ == "__main__":

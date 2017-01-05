@@ -982,6 +982,14 @@ class NullRouterFilter(object):
         return router_id_list
 
 
+def load_router_ids(path):
+    router_ids = []
+    with open(path, 'r') as router_list_file:
+        for line in router_list_file.read().split():
+            router_ids.append(line.strip())
+    return router_ids
+
+
 if __name__ == '__main__':
     args = parse_args()
     setup_logging(args)
