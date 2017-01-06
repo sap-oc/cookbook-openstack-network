@@ -3,6 +3,7 @@ import unittest
 import collections
 import importlib
 import logging
+import tempfile
 ha_tool = importlib.import_module("neutron-ha-tool")
 
 
@@ -109,7 +110,9 @@ class TestL3AgentMigrate(unittest.TestCase):
 
         # None as Agent Picker - given no dead agents, no migration, and
         # therefore no agent picking will take place
-        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(
+            neutron_client, None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
 
@@ -118,7 +121,9 @@ class TestL3AgentMigrate(unittest.TestCase):
 
         # None as Agent Picker - given no live agents, no migration, and
         # therefore no agent picking will take place
-        error_count = ha_tool.l3_agent_migrate(neutron_client, None)
+        error_count = ha_tool.l3_agent_migrate(
+            neutron_client, None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(1, error_count)
 
@@ -128,7 +133,9 @@ class TestL3AgentMigrate(unittest.TestCase):
         fake_neutron.add_router('dead-agent-0', 'router-1', {})
 
         error_count = ha_tool.l3_agent_migrate(
-            neutron_client, ha_tool.RandomAgentPicker(), now=True)
+            neutron_client, ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(), now=True
+        )
 
         self.assertEqual(0, error_count)
         self.assertEqual(
@@ -142,7 +149,9 @@ class TestL3AgentEvacuate(unittest.TestCase):
 
         # None as Agent Picker - given no agents, no migration, and therefore no
         # agent picking will take place
-        error_count = ha_tool.l3_agent_evacuate(neutron_client, 'host1', None)
+        error_count = ha_tool.l3_agent_evacuate(
+            neutron_client, 'host1', None, ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
 
@@ -152,7 +161,9 @@ class TestL3AgentEvacuate(unittest.TestCase):
         fake_neutron.add_router('live-agent-0', 'router', {})
 
         error_count = ha_tool.l3_agent_evacuate(
-            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker())
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter()
+        )
 
         self.assertEqual(0, error_count)
         self.assertEqual(
@@ -249,6 +260,53 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
 
         with self.assertRaises(IndexError):
             picker.pick()
+
+
+class TestLoadRouterIds(unittest.TestCase):
+
+    def test_loading_empty_file_returns_empty_array(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual([], router_list)
+
+    def test_empty_lines_skipped(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            list_file.write('\n')
+            list_file.write('      ')
+            list_file.seek(0)
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual([], router_list)
+
+    def test_lines_stripped(self):
+        with tempfile.NamedTemporaryFile() as list_file:
+            list_file.write('  some-router-id   ')
+            list_file.seek(0)
+            router_list = ha_tool.load_router_ids(list_file.name)
+
+        self.assertEqual(['some-router-id'], router_list)
+
+
+class TestWhitelistRouterFilter(unittest.TestCase):
+
+    def test_empty_white_list_filters_out_all_router_ids(self):
+        router_filter = ha_tool.WhitelistRouterFilter([])
+
+        filtered_router_ids = router_filter.filter_routers(
+            ['router-id-1', 'router-id-2']
+        )
+
+        self.assertEqual([], filtered_router_ids)
+
+    def test_only_whitelisted_routers_returned(self):
+        router_filter = ha_tool.WhitelistRouterFilter(['router-id-1'])
+
+        filtered_router_ids = router_filter.filter_routers(
+            ['router-id-1', 'router-id-2']
+        )
+
+        self.assertEqual(['router-id-1'], filtered_router_ids)
 
 
 if __name__ == "__main__":
