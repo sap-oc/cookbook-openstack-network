@@ -57,16 +57,7 @@ IDENTITY_API_VERSIONS = {
 ROUTER_CACHE_MAX_AGE_SECONDS = 5 * 60
 
 
-def parse_args():
-    # ensure environment has necessary items to authenticate
-    for key in ['OS_USERNAME', 'OS_AUTH_URL', 'OS_REGION_NAME']:
-        if key not in os.environ.keys():
-            raise SystemExit("Your environment is missing '%s'" % key)
-    keys = ['OS_TENANT_NAME', 'OS_PROJECT_NAME']
-    if not any(key in os.environ.keys() for key in keys):
-        raise SystemExit("Your environment is missing "
-                         "'OS_TENANT_NAME' or 'OS_PROJECT_NAME")
-
+def make_argparser():
     ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('-d', '--debug', action='store_true',
                     default=False, help='Show debugging output')
@@ -117,10 +108,11 @@ def parse_args():
                          'moved. The router list file should specify one '
                          'router id per line. This only applies for '
                          'agent evacuation.')
-    ap.add_argument('--target-agent-id', default=None,
+    target_agent_parser = ap.add_mutually_exclusive_group(required=False)
+    target_agent_parser.add_argument('--target-agent-id', default=None,
                     help='Explicitly select a target agent by specifying an '
                          'agent id.')
-    ap.add_argument('--target-host', default=None,
+    target_agent_parser.add_argument('--target-host', default=None,
                     help='Explicitly select a target agent by specifying its '
                          'host.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
@@ -132,6 +124,20 @@ def parse_args():
                                   'its ports and floating IPs to be ACTIVE '
                                   'again on the target agent.')
     wait_parser.set_defaults(wait_for_router=True)
+    return ap
+
+
+def parse_args():
+    # ensure environment has necessary items to authenticate
+    for key in ['OS_USERNAME', 'OS_AUTH_URL', 'OS_REGION_NAME']:
+        if key not in os.environ.keys():
+            raise SystemExit("Your environment is missing '%s'" % key)
+    keys = ['OS_TENANT_NAME', 'OS_PROJECT_NAME']
+    if not any(key in os.environ.keys() for key in keys):
+        raise SystemExit("Your environment is missing "
+                         "'OS_TENANT_NAME' or 'OS_PROJECT_NAME")
+
+    ap = make_argparser()
     args = ap.parse_args()
     modes = [
         args.l3_agent_check,
@@ -256,7 +262,7 @@ def run(args):
 
     if args.target_agent_id:
         agent_picker = AgentIdBasedAgentPicker(args.target_agent_id)
-    if args.target_host:
+    elif args.target_host:
         agent_picker = HostBasedAgentPicker(args.target_host)
 
     if args.l3_agent_check:
