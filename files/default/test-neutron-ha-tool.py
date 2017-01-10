@@ -400,6 +400,27 @@ class TestArgumentParsing(unittest.TestCase):
             params
         )
 
+    def test_target_agent_id_and_target_host_are_mutually_exclusive(self):
+        argparser = ha_tool.make_argparser()
+
+        with self.assertRaises(SystemExit) as excinfo:
+            argparser.parse_args(
+                ['--target-host', 'host', '--target-agent-id', 'agent-id'])
+
+    def test_setting_target_agent_id_option(self):
+        argparser = ha_tool.make_argparser()
+
+        params = argparser.parse_args(['--target-agent-id', 'agent-id'])
+
+        self.assertEqual('agent-id', params.target_agent_id)
+
+    def test_setting_target_host_option(self):
+        argparser = ha_tool.make_argparser()
+
+        params = argparser.parse_args(['--target-host', 'host'])
+
+        self.assertEqual('host', params.target_host)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)

@@ -108,10 +108,11 @@ def make_argparser():
                          'moved. The router list file should specify one '
                          'router id per line. This only applies for '
                          'agent evacuation.')
-    ap.add_argument('--target-agent-id', default=None,
+    target_agent_parser = ap.add_mutually_exclusive_group(required=False)
+    target_agent_parser.add_argument('--target-agent-id', default=None,
                     help='Explicitly select a target agent by specifying an '
                          'agent id.')
-    ap.add_argument('--target-host', default=None,
+    target_agent_parser.add_argument('--target-host', default=None,
                     help='Explicitly select a target agent by specifying its '
                          'host.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
