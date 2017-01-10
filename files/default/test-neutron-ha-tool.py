@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import unittest
 import collections
@@ -366,6 +367,38 @@ class TestHostBasedAgentPicker(unittest.TestCase):
 
         self.assertEqual(
             'Cannot find agent with host: invalid', str(ctx.exception))
+
+
+class TestArgumentParsing(unittest.TestCase):
+
+    def test_argparser_default_values(self):
+        argparser = ha_tool.make_argparser()
+
+        params = argparser.parse_args([])
+
+        self.assertEqual(
+            argparse.Namespace(
+                debug=False,
+                quiet=False,
+                noop=False,
+                l3_agent_check=False,
+                l3_agent_migrate=False,
+                l3_agent_evacuate=None,
+                l3_agent_rebalance=False,
+                replicate_dhcp=False,
+                now=False,
+                retry=False,
+                retry_max_interval=10000,
+                insecure=False,
+                ssh_delete_namespace=False,
+                agent_selection_mode='least-busy',
+                router_list_file=None,
+                target_agent_id=None,
+                target_host=None,
+                wait_for_router=True
+            ),
+            params
+        )
 
 
 if __name__ == "__main__":
