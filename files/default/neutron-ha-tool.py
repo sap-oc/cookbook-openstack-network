@@ -262,7 +262,7 @@ def run(args):
 
     if args.target_agent_id:
         agent_picker = AgentIdBasedAgentPicker(args.target_agent_id)
-    if args.target_host:
+    elif args.target_host:
         agent_picker = HostBasedAgentPicker(args.target_host)
 
     if args.l3_agent_check:
