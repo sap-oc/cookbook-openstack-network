@@ -309,6 +309,65 @@ class TestWhitelistRouterFilter(unittest.TestCase):
         self.assertEqual(['router-id-1'], filtered_router_ids)
 
 
+class TestAgentIdBasedAgentPicker(unittest.TestCase):
+
+    def make_picker(self, agent_id):
+        picker = ha_tool.AgentIdBasedAgentPicker(agent_id)
+        picker.set_agents(
+            [
+                {'id': 'live-agent-0', 'host': 'host-0'},
+                {'id': 'live-agent-1', 'host': 'host-1'}
+            ]
+        )
+        return picker
+
+    def test_picking_an_agent_by_agent_id(self):
+        picker = self.make_picker('live-agent-0')
+
+        picked_agent = picker.pick()
+
+        self.assertEqual('live-agent-0', picked_agent['id'])
+
+    def test_agent_not_found_raises_index_error(self):
+        picker = self.make_picker('invalid')
+
+        with self.assertRaises(IndexError) as ctx:
+            picker.pick()
+
+        self.assertEqual(
+            'Cannot find agent with agent id: invalid', str(ctx.exception))
+
+
+class TestHostBasedAgentPicker(unittest.TestCase):
+
+    def make_picker(self, host):
+        picker = ha_tool.HostBasedAgentPicker(host)
+        picker.set_agents(
+            [
+                {'id': 'live-agent-0', 'host': 'host-0'},
+                {'id': 'live-agent-1', 'host': 'host-1'}
+            ]
+        )
+        return picker
+
+    def test_picking_an_agent_by_host(self):
+        picker = self.make_picker('host-0')
+
+        picked_agent = picker.pick()
+
+        self.assertEqual('host-0', picked_agent['host'])
+
+
+    def test_agent_not_found_by_host_id_raises_index_error(self):
+        picker = self.make_picker('invalid')
+
+        with self.assertRaises(IndexError) as ctx:
+            picker.pick()
+
+        self.assertEqual(
+            'Cannot find agent with host: invalid', str(ctx.exception))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main()
