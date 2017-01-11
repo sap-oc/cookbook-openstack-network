@@ -5,6 +5,7 @@ import collections
 import importlib
 import logging
 import tempfile
+import mock
 ha_tool = importlib.import_module("neutron-ha-tool")
 
 
@@ -309,6 +310,23 @@ class TestWhitelistRouterFilter(unittest.TestCase):
 
         self.assertEqual(['router-id-1'], filtered_router_ids)
 
+
+class TestSshDeleteRouterNamespace(unittest.TestCase):
+
+    @mock.patch('neutron-ha-tool.paramiko.SSHClient')
+    def test_ssh_command_executed(self, mock_ssh):
+        mock_stdout = mock.MagicMock()
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_stderr = mock.MagicMock()
+        mock_sshclient = mock.MagicMock()
+        mock_ssh().__enter__.return_value = mock_sshclient
+        mock_sshclient.exec_command.return_value = [ None,
+                                                     mock_stdout,
+                                                     mock_stderr ]
+        ha_tool.ssh_delete_router_namespace("host1", "routerid1")
+        mock_sshclient.connect.assert_called_once_with("host1", timeout=mock.ANY)
+        mock_sshclient.exec_command.assert_called_once_with(
+            "ip netns delete qrouter-routerid1", get_pty=mock.ANY, timeout=mock.ANY)
 
 class TestAgentIdBasedAgentPicker(unittest.TestCase):
 
