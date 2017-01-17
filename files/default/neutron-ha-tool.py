@@ -247,7 +247,8 @@ def run(args):
             service_type='network',
             endpoint_type=endpoint_type
         ),
-        token=keystone.get_token(keystone.session)
+        token=keystone.get_token(keystone.session),
+        **kclient_kwargs
     )
 
     # set json return type
