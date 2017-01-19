@@ -671,7 +671,8 @@ def migrate_router(qclient, router_id, agent, target,
         wait_router_migrated(qclient, router_id, target['host'])
 
     if delete_namespace:
-        ssh_delete_router_namespace(agent['host'], router_id)
+        nscleanup = RemoteRouterNsCleanup(agent['host'], router_id)
+        nscleanup.delete_router_namespace()
 
 
 def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
@@ -733,40 +734,6 @@ def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
         raise RuntimeError("Some floating ips are not ACTIVE "
                            "on router_id=%s: [%s]" %
                            (router_id, ", ".join(remaining_fips)))
-
-
-def ssh_delete_router_namespace(target_host, router_id):
-    namespace = "qrouter-" + router_id
-    command = "ip netns delete " + namespace
-
-    with paramiko.SSHClient() as ssh_client:
-        # Accept unknown host keys (reflects a "StrictHostKeyChecking no"
-        # setting in the ssh_config)
-        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh_client.load_system_host_keys()
-
-        try:
-            ssh_client.connect(target_host, timeout=10)
-            stdin, stdout, stderr = ssh_client.exec_command(command,
-                                                            timeout=10,
-                                                            get_pty=True)
-            out_lines = stdout.readlines()
-            err_lines = stderr.readlines()
-            rc = stdout.channel.recv_exit_status()
-            ssh_client.close()
-
-            if rc != 0:
-                LOG.warn("Failed to delete namespace %s delete on %s",
-                         namespace, target_host)
-                LOG.warn("SSH stdout: %s", "".join(out_lines))
-                LOG.warn("SSH stderr: %s", "".join(err_lines))
-            else:
-                LOG.info("namespace %s deleted on %s", namespace, target_host)
-
-        except socket.timeout:
-            LOG.warn("SSH timeout exceeded. "
-                     "Failed to delete namespace %s on %s.",
-                     namespace, target_host)
 
 
 def list_networks(qclient):
@@ -1057,6 +1024,96 @@ class HostBasedAgentPicker(object):
         raise IndexError(
             'Cannot find agent with host: {}'.format(self.host)
         )
+
+
+class RemoteRouterNsCleanup(object):
+
+    def __init__(self, host, routerid):
+        self.target_host = host
+        self.namespace = "qrouter-" + routerid
+        self.timeout = 10
+        self.netns_del = "ip netns delete " + self.namespace
+        self.netns_pids = "ip netns pids " + self.namespace
+        self.netns_list = "ip netns list"
+
+    def _simple_ssh_command(self, command):
+        # Note, that when get_pty is True, paramiko will never return anything
+        # on the stderr channel, that's why we ignore it here. (stderr output
+        # will endup in the stdout channel)
+        _, stdout, _ = self.ssh_client.exec_command(command,
+                                                    timeout=10,
+                                                    get_pty=True)
+        out_lines = stdout.readlines()
+        rc = stdout.channel.recv_exit_status()
+        return [rc, [line.strip() for line in out_lines]]
+
+    def _namespace_exists(self):
+        rc, out_lines = self._simple_ssh_command(self.netns_list)
+        return self.namespace in out_lines
+
+    def _get_namespace_pids(self):
+        rc, out_lines = self._simple_ssh_command(self.netns_pids)
+        if rc:
+            if out_lines and "No such file or directory" in out_lines[0]:
+                # Assume the namespace was delete meanwhile
+                return []
+            else:
+                raise RuntimeError("Failed to get pids for namespace %s",
+                                   self.namespace)
+        else:
+            return out_lines
+
+    def _kill_pids_in_namespace(self):
+        LOG.debug("Trying to terminate all processes namespace "
+                  "%s on host %s", self.namespace, self.target_host)
+        remaining = 3
+        pids = self._get_namespace_pids()
+        while pids:
+            LOG.debug("Processes still running: [%s]", ", ".join(pids))
+            for pid in pids:
+                killcmd = "kill "
+                # use more force (kill -9) on the last try
+                if remaining == 1:
+                    LOG.debug("Last try. Using SIGKILL now")
+                    killcmd = "kill -9 "
+
+                rc, out_lines = self._simple_ssh_command(killcmd + pid)
+                if rc:
+                    if out_lines and "No such process" in out_lines[0]:
+                        # Assume the process was stopped meanwhile
+                        return None
+                    else:
+                        raise RuntimeError("Failed to kill %s on host %s",
+                                           pid, self.target_host)
+
+            remaining -= 1
+            if remaining:
+                pids = self._get_namespace_pids()
+                if pids:
+                    LOG.debug("Some processes are still running in namespace "
+                              "%s on host %s. Retrying.", self.namespace,
+                              self.target_host)
+                    time.sleep(1)
+            else:
+                break
+
+    def delete_router_namespace(self):
+        LOG.debug("Deleting namespace %s on host %s.",
+                  self.namespace,
+                  self.target_host)
+        self.ssh_client=paramiko.SSHClient()
+        self.ssh_client.set_missing_host_key_policy(
+            paramiko.AutoAddPolicy())
+        self.ssh_client.load_system_host_keys()
+        self.ssh_client.connect(self.target_host, timeout=self.timeout)
+        with self.ssh_client:
+            try:
+                if self._namespace_exists():
+                    self._kill_pids_in_namespace()
+                    self._simple_ssh_command(self.netns_del)
+            except socket.timeout:
+                LOG.warn("SSH timeout exceeded. Failed to delete namespace "
+                         "%s on %s", self.namespace, self.target_host)
 
 
 if __name__ == '__main__':
