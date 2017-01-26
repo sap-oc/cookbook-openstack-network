@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/SUSE-Cloud/cookbook-openstack-network.svg?branch=neutron-ha-tool-maintenance)](https://travis-ci.org/SUSE-Cloud/cookbook-openstack-network)
+
+
 Description
 ===========
 
