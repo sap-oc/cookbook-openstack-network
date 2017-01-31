@@ -108,6 +108,12 @@ def make_argparser():
                          'moved. The router list file should specify one '
                          'router id per line. This only applies for '
                          'agent evacuation.')
+    ap.add_argument('--exit-on-first-failure', action='store_true',
+                    dest='fail_fast', default=False,
+                    help='When evacuating an l3-agent exit with an error code '
+                         'after the first failed router migration. The '
+                         'standard behaviour is to continue and report errors '
+                         'after trying to evacuate all routers.')
     target_agent_parser = ap.add_mutually_exclusive_group(required=False)
     target_agent_parser.add_argument('--target-agent-id', default=None,
                     help='Explicitly select a target agent by specifying an '
@@ -279,7 +285,8 @@ def run(args):
         router_filter = NullRouterFilter()
         errors = retry_with_backoff(l3_agent_migrate, args)(
             qclient, agent_picker, router_filter, args.noop, args.now,
-            args.wait_for_router, args.ssh_delete_namespace)
+            args.wait_for_router, args.ssh_delete_namespace, args.fail_fast
+        )
 
     elif args.l3_agent_evacuate:
         LOG.info("Performing L3 Agent Evacuation from host %s",
@@ -291,7 +298,9 @@ def run(args):
             router_filter = NullRouterFilter()
         errors = retry_with_backoff(l3_agent_evacuate, args)(
             qclient, args.l3_agent_evacuate, agent_picker, router_filter,
-            args.noop, args.wait_for_router, args.ssh_delete_namespace)
+            args.noop, args.wait_for_router, args.ssh_delete_namespace,
+            args.fail_fast
+        )
 
     elif args.l3_agent_rebalance:
         LOG.info("Rebalancing L3 Agent Router Count")
@@ -438,7 +447,7 @@ def l3_agent_check(qclient):
 
 def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
                      now=False, wait_for_router=True,
-                     ssh_delete_namespace=False):
+                     ssh_delete_namespace=False, fail_fast=False):
     """
     Walk the l3 agents searching for agents that are offline.  For those that
     are offline, we will retrieve a list of routers on them and migrate them to
@@ -492,7 +501,7 @@ def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
             migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
                                           agent_picker, router_filter,
                                           noop, wait_for_router,
-                                          ssh_delete_namespace)
+                                          ssh_delete_namespace, fail_fast)
         total_migrations += migrations
         total_errors += errors
 
@@ -506,7 +515,7 @@ def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
 
 def l3_agent_evacuate(qclient, agent_host, agent_picker, router_filter,
                       noop=False, wait_for_router=True,
-                      ssh_delete_namespace=False):
+                      ssh_delete_namespace=False, fail_fast=False):
     """
     Retreive a list of routers scheduled on the listed agent, and move that
     to another agent.
@@ -539,7 +548,7 @@ def l3_agent_evacuate(qclient, agent_host, agent_picker, router_filter,
         migrate_l3_routers_from_agent(qclient, agent_to_evacuate,
                                       target_list, agent_picker, router_filter,
                                       noop, wait_for_router,
-                                      ssh_delete_namespace)
+                                      ssh_delete_namespace, fail_fast)
     LOG.info("%d routers %s evacuated from L3 agent %s", migrations,
              "would have been" if noop else "were", agent_host)
     if errors > 0:
@@ -596,7 +605,7 @@ def replicate_dhcp(qclient, noop=False):
 
 def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   router_filter, noop, wait_for_router,
-                                  delete_namespace):
+                                  delete_namespace, fail_fast):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     router_id_list = list_routers_on_l3_agent(qclient, agent['id'])
     router_id_list = router_filter.filter_routers(router_id_list)
@@ -611,6 +620,8 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
             migrations += 1
         else:
             errors += 1
+            if fail_fast:
+                break
 
     return (migrations, errors)
 
