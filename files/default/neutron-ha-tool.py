@@ -623,7 +623,8 @@ def migrate_router_safely(qclient, noop, router_id, agent, target,
         return True
 
     try:
-        migrate_router(qclient, router_id, agent, target,
+        router = get_router(qclient, router_id)
+        migrate_router(qclient, router, agent, target,
                        wait_for_router, delete_namespace)
         return True
     except:
@@ -632,46 +633,55 @@ def migrate_router_safely(qclient, noop, router_id, agent, target,
         return False
 
 
-def migrate_router(qclient, router_id, agent, target,
+def migrate_router(qclient, router, agent, target,
                    wait_for_router=True, delete_namespace=False):
     """
     Returns nothing, and raises exceptions on errors.
 
     :param qclient: A neutronclient
-    :param router_id: The id of the router to migrate
+    :param router: The router to migrate
     :param agent_id: The id of the l3 agent to migrate from
     :param target_id: The id of the l3 agent to migrate to
     """
 
     LOG.info("Migrating router=%s from agent=%s to agent=%s",
-             router_id, agent['id'], target['id'])
+             router['id'], agent['id'], target['id'])
 
     # N.B. The neutron API will return "success" even when there is a
     # subsequent failure during the add or remove process so we must check to
     # ensure the router has been added or removed
 
     # Remove the router from the original agent
-    qclient.remove_router_from_l3_agent(agent['id'], router_id)
+    qclient.remove_router_from_l3_agent(agent['id'], router['id'])
     LOG.debug("Removed router from agent=%s" % agent['id'])
 
-    # ensure it is removed or log an error
-    if router_id in list_routers_on_l3_agent(qclient, agent['id']):
-        raise RuntimeError("Failed to remove router_id=%s from agent_id=%s" %
-                           (router_id, agent['id']))
+    # ensure it is removed
+    if router['id'] in list_routers_on_l3_agent(qclient, agent['id']):
+        if router['distributed']:
+            # Because of bsc#1016943, the router is not completely removed
+            # from the agent. As a workaround, issuing a second remove
+            # seems to bring the router/agent intro correct state
+            qclient.remove_router_from_l3_agent(agent['id'], router['id'])
+            LOG.debug("The router was not correctly deleted from agent=%s, "
+                      "retrying." % agent['id'])
+
+        if router['id'] in list_routers_on_l3_agent(qclient, agent['id']):
+            raise RuntimeError("Failed to remove router_id=%s from agent_id="
+                               "%s" % (router['id'], agent['id']))
 
     # add the router id to a live agent
-    router_body = {'router_id': router_id}
+    router_body = {'router_id': router['id']}
     qclient.add_router_to_l3_agent(target['id'], router_body)
 
     # ensure it is removed or log an error
-    if router_id not in list_routers_on_l3_agent(qclient, target['id']):
+    if router['id'] not in list_routers_on_l3_agent(qclient, target['id']):
         raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
-                           (router_id, agent['id']))
+                           (router['id'], agent['id']))
     if wait_for_router:
-        wait_router_migrated(qclient, router_id, target['host'])
+        wait_router_migrated(qclient, router['id'], target['host'])
 
     if delete_namespace:
-        nscleanup = RemoteRouterNsCleanup(agent['host'], router_id)
+        nscleanup = RemoteRouterNsCleanup(agent['host'], router['id'])
         nscleanup.delete_router_namespace()
 
 
@@ -759,6 +769,19 @@ def list_dhcp_agent_networks(qclient, agent_id):
     resp = qclient.list_networks_on_dhcp_agent(agent_id)
     LOG.debug("list_networks_on_dhcp_agent: %s", resp)
     return [s['id'] for s in resp['networks']]
+
+
+def get_router(qclient, router_id):
+    """
+    Return a router object
+
+    :param qclient: A neutronclient
+    :param router_id: A router id
+    """
+
+    resp = qclient.show_router(router_id)
+    LOG.debug("get_router: %s", resp)
+    return resp['router']
 
 
 def list_routers(qclient):
