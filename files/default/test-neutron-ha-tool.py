@@ -106,7 +106,6 @@ def setup_fake_neutron(live_agents=0, dead_agents=0):
         )
     return fake_neutron
 
-
 class TestL3AgentMigrate(unittest.TestCase):
 
     def test_no_dead_agents_migrate_returns_without_errors(self):
@@ -174,6 +173,22 @@ class TestL3AgentEvacuate(unittest.TestCase):
             set(['router']),
             fake_neutron.routers_by_agent['live-agent-1']
         )
+
+    @mock.patch('neutron-ha-tool.wait_router_migrated')
+    def test_evacuate_fast_fail_return_exactly_one_error(self,
+                                                         mock_wait_router):
+        mock_wait_router.side_effect = RuntimeError("Failure")
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        neutron_client = FakeNeutronClient(fake_neutron)
+        fake_neutron.add_router('live-agent-0', 'router1', {})
+        fake_neutron.add_router('live-agent-0', 'router2', {})
+
+        error_count = ha_tool.l3_agent_evacuate(
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(), fail_fast=True
+        )
+
+        self.assertEqual(1, error_count)
 
 
 class TestLeastBusyAgentPicker(unittest.TestCase):
@@ -474,7 +489,8 @@ class TestArgumentParsing(unittest.TestCase):
                 router_list_file=None,
                 target_agent_id=None,
                 target_host=None,
-                wait_for_router=True
+                wait_for_router=True,
+                fail_fast=False
             ),
             params
         )
