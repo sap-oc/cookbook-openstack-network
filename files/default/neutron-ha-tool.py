@@ -639,8 +639,9 @@ def migrate_router_safely(qclient, noop, router, agent, target,
         return True
 
     try:
-        migrate_router(qclient, router, agent, target,
-                       wait_for_router, delete_namespace)
+        with term_disabled():
+            migrate_router(qclient, router, agent, target,
+                           wait_for_router, delete_namespace)
         return True
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
@@ -1172,6 +1173,7 @@ def term_disabled():
 if __name__ == '__main__':
     args = parse_args()
     setup_logging(args)
+    register_term_signal_handler()
 
     try:
         ret = run(args)
