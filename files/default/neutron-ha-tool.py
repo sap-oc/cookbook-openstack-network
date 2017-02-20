@@ -44,7 +44,7 @@ LOG = logging.getLogger('neutron-ha-tool')
 LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
 LOG_DATE = '%m-%d %H:%M'
 DESCRIPTION = "neutron High Availability Tool"
-TAKEOVER_DELAY = int(random.random() * 30 + 30)
+TAKEOVER_DELAY = random.randrange(30, 60)
 OS_PASSWORD_FILE = '/etc/neutron/os_password'
 
 
