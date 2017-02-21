@@ -667,7 +667,10 @@ def migrate_router(qclient, router, agent, target,
     LOG.debug("Removed router from agent=%s" % agent['id'])
 
     # ensure it is removed
-    if router in list_routers_on_l3_agent(qclient, agent['id']):
+    router_ids = [
+        r['id'] for r in list_routers_on_l3_agent(qclient, agent['id'])
+    ]
+    if router['id'] in router_ids:
         if router['distributed']:
             # Because of bsc#1016943, the router is not completely removed
             # from the agent. As a workaround, issuing a second remove
@@ -685,7 +688,10 @@ def migrate_router(qclient, router, agent, target,
     qclient.add_router_to_l3_agent(target['id'], router_body)
 
     # ensure it is removed or log an error
-    if router not in list_routers_on_l3_agent(qclient, target['id']):
+    router_ids = [
+        r['id'] for r in list_routers_on_l3_agent(qclient, target['id'])
+    ]
+    if router['id'] not in router_ids:
         raise RuntimeError("Failed to add router_id=%s from agent_id=%s" %
                            (router['id'], agent['id']))
     if wait_for_router:
