@@ -134,6 +134,9 @@ def make_argparser():
 
 
 def parse_args():
+    ap = make_argparser()
+    args = ap.parse_args()
+
     # ensure environment has necessary items to authenticate
     for key in ['OS_USERNAME', 'OS_AUTH_URL', 'OS_REGION_NAME']:
         if key not in os.environ.keys():
@@ -142,9 +145,6 @@ def parse_args():
     if not any(key in os.environ.keys() for key in keys):
         raise SystemExit("Your environment is missing "
                          "'OS_TENANT_NAME' or 'OS_PROJECT_NAME")
-
-    ap = make_argparser()
-    args = ap.parse_args()
     modes = [
         args.l3_agent_check,
         args.l3_agent_migrate,
