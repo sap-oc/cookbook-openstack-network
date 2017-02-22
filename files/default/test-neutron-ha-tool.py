@@ -7,6 +7,7 @@ import logging
 import tempfile
 import mock
 import socket
+import multiprocessing
 
 ha_tool = importlib.import_module("neutron-ha-tool")
 
@@ -515,6 +516,95 @@ class TestArgumentParsing(unittest.TestCase):
         params = argparser.parse_args(['--target-host', 'host'])
 
         self.assertEqual('host', params.target_host)
+
+
+def signal_tester(queue):
+    import importlib
+    import time
+    import sys
+
+    ha_tool = importlib.import_module("neutron-ha-tool")
+    ha_tool.register_term_signal_handler()
+
+    with ha_tool.term_disabled():
+        queue.put('started critical block')
+        time.sleep(100)
+        queue.put('about to exit critical block')
+
+    time.sleep(100)
+    sys.exit(1)
+
+
+class TestSignalHandling(unittest.TestCase):
+
+    def wait_for_subprocess_to_write(self, subproc, text):
+        data = subproc.stdout.read(len(text))
+
+        self.assertEqual(text, data)
+
+    def test_term_signal_handling_functionality(self):
+        queue = multiprocessing.Queue()
+
+        proc = multiprocessing.Process(target=signal_tester, args=(queue,))
+        proc.start()
+        self.assertEquals('started critical block', queue.get())
+        proc.terminate()
+        self.assertEquals('about to exit critical block', queue.get())
+        proc.join()
+
+        self.assertEqual(0, proc.exitcode)
+
+
+class SignalHandlerTest(unittest.TestCase):
+    def setUp(self):
+        self._globals = (
+            ha_tool.SHOULD_NOT_TERMINATE, ha_tool.TERM_SIGNAL_RECEIVED
+        )
+
+    def tearDown(self):
+        ha_tool.SHOULD_NOT_TERMINATE, ha_tool.TERM_SIGNAL_RECEIVED = (
+            self._globals
+        )
+
+
+class TestSignalHandler(SignalHandlerTest):
+    def test_exits_with_zero(self):
+        with self.assertRaises(SystemExit) as ctx:
+            ha_tool.term_signal_handler(None, None)
+
+        self.assertEqual(0, ctx.exception.code)
+
+    def test_sets_global_variable(self):
+        with self.assertRaises(SystemExit):
+            ha_tool.term_signal_handler(None, None)
+
+        self.assertTrue(ha_tool.TERM_SIGNAL_RECEIVED)
+
+    def test_does_not_quit_when_global_set(self):
+        ha_tool.SHOULD_NOT_TERMINATE = True
+
+        ha_tool.term_signal_handler(None, None)
+
+        self.assertTrue(ha_tool.TERM_SIGNAL_RECEIVED)
+
+
+class TestTermDisabled(SignalHandlerTest):
+    def test_disables_global_flag(self):
+        with ha_tool.term_disabled():
+            self.assertTrue(ha_tool.SHOULD_NOT_TERMINATE)
+
+    def test_exits_if_global_flag_set_while_in_context(self):
+        with self.assertRaises(SystemExit) as ctx:
+            with ha_tool.term_disabled():
+                ha_tool.TERM_SIGNAL_RECEIVED = True
+
+        self.assertEqual(0, ctx.exception.code)
+
+    def test_term_can_be_handled_after_context(self):
+        with ha_tool.term_disabled():
+            pass
+
+        self.assertFalse(ha_tool.SHOULD_NOT_TERMINATE)
 
 
 if __name__ == "__main__":

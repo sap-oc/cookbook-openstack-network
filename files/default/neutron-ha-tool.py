@@ -22,6 +22,7 @@
 
 
 import argparse
+import contextlib
 from collections import OrderedDict
 import datetime
 import logging
@@ -33,6 +34,7 @@ import sys
 import time
 import paramiko
 import socket
+import signal
 
 from neutronclient.common.exceptions import NeutronException
 from neutronclient.neutron import client as nclient
@@ -55,6 +57,8 @@ IDENTITY_API_VERSIONS = {
 }
 
 ROUTER_CACHE_MAX_AGE_SECONDS = 5 * 60
+TERM_SIGNAL_RECEIVED = False
+SHOULD_NOT_TERMINATE = False
 
 
 def make_argparser():
@@ -635,8 +639,9 @@ def migrate_router_safely(qclient, noop, router, agent, target,
         return True
 
     try:
-        migrate_router(qclient, router, agent, target,
-                       wait_for_router, delete_namespace)
+        with term_disabled():
+            migrate_router(qclient, router, agent, target,
+                           wait_for_router, delete_namespace)
         return True
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
@@ -1143,9 +1148,32 @@ class RemoteRouterNsCleanup(object):
                          "%s on %s", self.namespace, self.target_host)
 
 
+def term_signal_handler(signum, frame):
+    global TERM_SIGNAL_RECEIVED
+    TERM_SIGNAL_RECEIVED = True
+    if SHOULD_NOT_TERMINATE:
+        return
+    sys.exit(0)
+
+
+def register_term_signal_handler():
+    signal.signal(signal.SIGTERM, term_signal_handler)
+
+
+@contextlib.contextmanager
+def term_disabled():
+    global SHOULD_NOT_TERMINATE
+    SHOULD_NOT_TERMINATE = True
+    yield None
+    SHOULD_NOT_TERMINATE = False
+    if TERM_SIGNAL_RECEIVED:
+        sys.exit(0)
+
+
 if __name__ == '__main__':
     args = parse_args()
     setup_logging(args)
+    register_term_signal_handler()
 
     try:
         ret = run(args)
