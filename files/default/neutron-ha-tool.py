@@ -119,12 +119,12 @@ def make_argparser():
                          'standard behaviour is to continue and report errors '
                          'after trying to evacuate all routers.')
     target_agent_parser = ap.add_mutually_exclusive_group(required=False)
-    target_agent_parser.add_argument('--target-agent-id', default=None,
-                    help='Explicitly select a target agent by specifying an '
-                         'agent id.')
-    target_agent_parser.add_argument('--target-host', default=None,
-                    help='Explicitly select a target agent by specifying its '
-                         'host.')
+    target_agent_parser.add_argument(
+        '--target-agent-id', default=None,
+        help='Explicitly select a target agent by specifying an agent id.')
+    target_agent_parser.add_argument(
+        '--target-host', default=None,
+        help='Explicitly select a target agent by specifying its host.')
     wait_parser = ap.add_mutually_exclusive_group(required=False)
     wait_parser.add_argument('--wait-for-router', action='store_true',
                              dest='wait_for_router')
@@ -612,7 +612,9 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   delete_namespace, fail_fast):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     routers = list_routers_on_l3_agent(qclient, agent['id'])
-    router_id_list = router_filter.filter_routers([router['id'] for router in routers])
+    router_id_list = router_filter.filter_routers(
+        [router['id'] for router in routers]
+    )
     routers = [router for router in routers if router['id'] in router_id_list]
 
     migrations = 0
@@ -1133,7 +1135,7 @@ class RemoteRouterNsCleanup(object):
         LOG.debug("Deleting namespace %s on host %s.",
                   self.namespace,
                   self.target_host)
-        self.ssh_client=paramiko.SSHClient()
+        self.ssh_client = paramiko.SSHClient()
         self.ssh_client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy())
         self.ssh_client.load_system_host_keys()

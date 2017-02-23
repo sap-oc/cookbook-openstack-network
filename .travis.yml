@@ -2,5 +2,9 @@
 language: python
 python:
     - "2.7"
-install: pip install -r files/default/test-requirements.txt
-script: python files/default/test-neutron-ha-tool.py
+install:
+    - pip install -r files/default/test-requirements.txt
+script:
+    - flake8 neutron-ha-tool.py test-neutron-ha-tool.py
+    - python files/default/test-neutron-ha-tool.py
+

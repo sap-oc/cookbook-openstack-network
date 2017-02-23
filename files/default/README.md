@@ -14,4 +14,4 @@ Coverage report
 
 Code analysis
 
-	flake8 neutron-ha-tool.py test-neutron-ha-tool.py
+    flake8 neutron-ha-tool.py test-neutron-ha-tool.py
