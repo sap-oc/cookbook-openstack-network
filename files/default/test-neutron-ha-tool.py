@@ -107,6 +107,7 @@ def setup_fake_neutron(live_agents=0, dead_agents=0):
         )
     return fake_neutron
 
+
 class TestL3AgentMigrate(unittest.TestCase):
 
     def test_no_dead_agents_migrate_returns_without_errors(self):
@@ -151,8 +152,8 @@ class TestL3AgentEvacuate(unittest.TestCase):
     def test_evacuate_without_agents_returns_no_errors(self):
         neutron_client = FakeNeutronClient(FakeNeutron())
 
-        # None as Agent Picker - given no agents, no migration, and therefore no
-        # agent picking will take place
+        # None as Agent Picker - given no agents, no migration, and therefore
+        # no agent picking will take place
         error_count = ha_tool.l3_agent_evacuate(
             neutron_client, 'host1', None, ha_tool.NullRouterFilter()
         )
@@ -226,7 +227,7 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
 
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
-    def test_picking_an_agent_increases_internal_router_counter_per_agent(self):
+    def test_picking_an_agent_increases_internal_router_counter(self):
         self.fake_neutron.add_router('live-agent-0', 'router', {})
         picker = self.make_picker_and_set_agents()
 
@@ -453,7 +454,6 @@ class TestHostBasedAgentPicker(unittest.TestCase):
 
         self.assertEqual('host-0', picked_agent['host'])
 
-
     def test_agent_not_found_by_host_id_raises_index_error(self):
         picker = self.make_picker('invalid')
 
@@ -499,7 +499,7 @@ class TestArgumentParsing(unittest.TestCase):
     def test_target_agent_id_and_target_host_are_mutually_exclusive(self):
         argparser = ha_tool.make_argparser()
 
-        with self.assertRaises(SystemExit) as excinfo:
+        with self.assertRaises(SystemExit):
             argparser.parse_args(
                 ['--target-host', 'host', '--target-agent-id', 'agent-id'])
 
