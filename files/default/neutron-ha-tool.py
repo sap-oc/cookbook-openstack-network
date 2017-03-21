@@ -23,7 +23,6 @@
 
 import argparse
 import contextlib
-from collections import OrderedDict
 import datetime
 import logging
 from logging.handlers import SysLogHandler
@@ -327,87 +326,6 @@ def l3_agent_rebalance(qclient, noop=False, wait_for_router=True):
     :param qclient: A neutronclient
     :param noop: Optional noop flag
     """
-
-    # {u'binary': u'neutron-l3-agent',
-    #  u'description': None,
-    #  u'admin_state_up': True,
-    #  u'heartbeat_timestamp': u'2013-07-02 22:20:23',
-    #  u'alive': True,
-    #  u'topic': u'l3_agent',
-    #  u'host': u'o3r3.int.san3.attcompute.com',
-    #  u'agent_type': u'L3 agent',
-    #  u'created_at': u'2013-07-02 14:50:58',
-    #  u'started_at': u'2013-07-02 18:00:55',
-    #  u'id': u'6efe494a-616c-41ea-9c8f-2c592f4d46ff',
-    #  u'configurations': {
-    #      u'router_id': u'',
-    #      u'gateway_external_network_id': u'',
-    #      u'handle_internal_only_routers': True,
-    #      u'use_namespaces': True,
-    #      u'routers': 5,
-    #      u'interfaces': 3,
-    #      u'floating_ips': 9,
-    #      u'interface_driver':
-    #           u'neutron.agent.linux.interface.OVSInterfaceDriver',
-    #      u'ex_gw_ports': 3}
-    #  }
-
-    l3_agent_dict = {}
-    routers_on_l3_agent_dict = {}
-    agents = list_agents(qclient, agent_type='L3 agent')
-    num_agents = len(agents)
-    if num_agents <= 1:
-        LOG.info("No rebalancing required for 1 or fewer agents")
-        return 0
-
-    for l3_agent in agents:
-        l3_agent_dict[l3_agent['id']] = l3_agent
-        routers_on_l3_agent_dict[l3_agent['id']] = \
-            list_routers_on_l3_agent(qclient, l3_agent['id'])
-
-    ordered_l3_agent_dict = OrderedDict(
-        sorted(routers_on_l3_agent_dict.items(), key=lambda t: len(t[0])))
-    ordered_l3_agent_list = list(ordered_l3_agent_dict)
-    num_agents = len(ordered_l3_agent_list)
-    LOG.info("Agent list: %s",
-             ordered_l3_agent_list[0:(num_agents - 1 / 2) + 1])
-    i = 0
-    migrations = 0
-    errors = 0
-    for agent in ordered_l3_agent_list[0:num_agents - 1 / 2]:
-        low_agent_id = ordered_l3_agent_list[i]
-        hgh_agent_id = ordered_l3_agent_list[-(i + 1)]
-
-        # do nothing if we end up comparing the same router
-        if low_agent_id == hgh_agent_id:
-            continue
-
-        LOG.info("Examining low_agent=%s, high_agent=%s",
-                 low_agent_id, hgh_agent_id)
-
-        low_agent_router_count = len(routers_on_l3_agent_dict[low_agent_id])
-        hgh_agent_router_count = len(routers_on_l3_agent_dict[hgh_agent_id])
-
-        LOG.info("Low Count=%d, High Count=%d",
-                 low_agent_router_count, hgh_agent_router_count)
-
-        for router in routers_on_l3_agent_dict[hgh_agent_id]:
-            if low_agent_router_count >= hgh_agent_router_count:
-                break
-
-            if migrate_router_safely(qclient, noop, router,
-                                     l3_agent_dict[hgh_agent_id],
-                                     l3_agent_dict[low_agent_id],
-                                     wait_for_router):
-                low_agent_router_count += 1
-                hgh_agent_router_count -= 1
-                migrations += 1
-            else:
-                errors += 1
-
-        i += 1
-
-    return errors
 
 
 def l3_agent_check(qclient):
