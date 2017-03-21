@@ -693,6 +693,7 @@ def migrate_router(qclient, router, agent, target,
     # add the router id to a live agent
     router_body = {'router_id': router['id']}
     qclient.add_router_to_l3_agent(target['id'], router_body)
+    LOG.debug("Added router to agent=%s" % target['id'])
 
     # ensure it is added or log an error
     router_ids = [
