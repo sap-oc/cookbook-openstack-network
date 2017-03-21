@@ -640,6 +640,36 @@ class TestAgentRebalancing(unittest.TestCase):
             [53, 53, 53, 53, 52], get_router_distribution(neutron_client)
         )
 
+    def test_no_agents_in_the_system(self):
+        fake_neutron = fake_neutron_with_distribution([])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [], get_router_distribution(neutron_client)
+        )
+
+    def test_already_balanced_system_is_not_touched(self):
+        fake_neutron = fake_neutron_with_distribution([5, 4, 5, 4, 5])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [5, 4, 5, 4, 5], get_router_distribution(neutron_client)
+        )
+
+    def test_only_one_agent_exists(self):
+        fake_neutron = fake_neutron_with_distribution([5])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [5], get_router_distribution(neutron_client)
+        )
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)

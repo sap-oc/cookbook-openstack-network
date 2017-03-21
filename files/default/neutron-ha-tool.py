@@ -326,6 +326,101 @@ def l3_agent_rebalance(qclient, noop=False, wait_for_router=True):
     :param qclient: A neutronclient
     :param noop: Optional noop flag
     """
+    agent_list = live_agent_list(qclient)
+    router_mover = RouterMover(qclient, noop, wait_for_router)
+
+    while agent_list.calculate_maximal_router_count_difference() > 1:
+        router_mover.move_one_router(
+            agent_list.agent_with_most_number_of_routers(),
+            agent_list.agent_with_least_number_of_routers()
+        )
+
+    return router_mover.errors
+
+
+class Agent(object):
+    def __init__(self, agent_dict, routers):
+        self.agent_dict = agent_dict
+        self.routers = routers
+
+    def count_routers(self):
+        return len(self.routers)
+
+    def pop_router(self):
+        return self.routers.pop()
+
+    def add_router(self, router):
+        self.routers.append(router)
+
+
+def live_agent_list(qclient):
+    """Create an AgentList populated with the live agents of the system
+
+    :param qclient: neuton client.
+    :return: an AgentList populated with the live agents listed by neutron.
+    """
+    agents = []
+    all_agents = list_agents(qclient)
+    for agent_dict in list_alive_agents(all_agents, 'L3 agent'):
+        agent_id = agent_dict['id']
+        routers = list_routers_on_l3_agent(qclient, agent_id)
+        agents.append(Agent(agent_dict, routers))
+    return AgentList(agents)
+
+
+class RouterMover(object):
+    def __init__(self, qclient, noop, wait_for_router):
+        self.qclient = qclient
+        self.noop = noop
+        self.wait_for_router = wait_for_router
+        self.errors = 0
+
+    def move_one_router(self, source_agent, target_agent):
+        """Move one router between agents
+
+        Maintain the agent structures, and talk to neutron to do the actual
+        router migration. Also count errors.
+
+        :param source_agent: source agent
+        :param target_agent: target agent
+        :return: None
+        """
+        router_to_move = source_agent.pop_router()
+        target_agent.add_router(router_to_move)
+        migration_succeeded = migrate_router_safely(
+            self.qclient,
+            self.noop,
+            router_to_move,
+            source_agent.agent_dict,
+            target_agent.agent_dict,
+            self.wait_for_router
+        )
+        if not migration_succeeded:
+            self.errors += 1
+
+
+class AgentList(object):
+    def __init__(self, agents):
+        self.agents = agents
+
+    @property
+    def agents_sorted_by_router_count(self):
+        return sorted(self.agents, key=lambda agent: agent.count_routers())
+
+    def agent_with_least_number_of_routers(self):
+        return self.agents_sorted_by_router_count[0]
+
+    def agent_with_most_number_of_routers(self):
+        return self.agents_sorted_by_router_count[-1]
+
+    def calculate_maximal_router_count_difference(self):
+        if not self.agents:
+            return 0
+
+        return (
+            self.agent_with_most_number_of_routers().count_routers()
+            - self.agent_with_least_number_of_routers().count_routers()
+        )
 
 
 def l3_agent_check(qclient):
