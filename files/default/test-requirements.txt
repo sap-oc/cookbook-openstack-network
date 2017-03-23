@@ -6,3 +6,7 @@ retrying
 paramiko
 python-neutronclient
 python-keystoneclient
+oslo.utils
+oslo.config
+oslo.log
+SQLAlchemy
