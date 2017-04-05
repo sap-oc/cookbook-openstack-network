@@ -23,7 +23,6 @@
 
 import argparse
 import contextlib
-from collections import OrderedDict
 import datetime
 import logging
 from logging.handlers import SysLogHandler
@@ -327,87 +326,101 @@ def l3_agent_rebalance(qclient, noop=False, wait_for_router=True):
     :param qclient: A neutronclient
     :param noop: Optional noop flag
     """
+    agent_list = live_agent_list(qclient)
+    router_mover = RouterMover(qclient, noop, wait_for_router)
 
-    # {u'binary': u'neutron-l3-agent',
-    #  u'description': None,
-    #  u'admin_state_up': True,
-    #  u'heartbeat_timestamp': u'2013-07-02 22:20:23',
-    #  u'alive': True,
-    #  u'topic': u'l3_agent',
-    #  u'host': u'o3r3.int.san3.attcompute.com',
-    #  u'agent_type': u'L3 agent',
-    #  u'created_at': u'2013-07-02 14:50:58',
-    #  u'started_at': u'2013-07-02 18:00:55',
-    #  u'id': u'6efe494a-616c-41ea-9c8f-2c592f4d46ff',
-    #  u'configurations': {
-    #      u'router_id': u'',
-    #      u'gateway_external_network_id': u'',
-    #      u'handle_internal_only_routers': True,
-    #      u'use_namespaces': True,
-    #      u'routers': 5,
-    #      u'interfaces': 3,
-    #      u'floating_ips': 9,
-    #      u'interface_driver':
-    #           u'neutron.agent.linux.interface.OVSInterfaceDriver',
-    #      u'ex_gw_ports': 3}
-    #  }
+    while agent_list.calculate_maximal_router_count_difference() > 1:
+        router_mover.move_one_router(
+            agent_list.agent_with_most_number_of_routers(),
+            agent_list.agent_with_least_number_of_routers()
+        )
 
-    l3_agent_dict = {}
-    routers_on_l3_agent_dict = {}
-    agents = list_agents(qclient, agent_type='L3 agent')
-    num_agents = len(agents)
-    if num_agents <= 1:
-        LOG.info("No rebalancing required for 1 or fewer agents")
-        return 0
+    return router_mover.errors
 
-    for l3_agent in agents:
-        l3_agent_dict[l3_agent['id']] = l3_agent
-        routers_on_l3_agent_dict[l3_agent['id']] = \
-            list_routers_on_l3_agent(qclient, l3_agent['id'])
 
-    ordered_l3_agent_dict = OrderedDict(
-        sorted(routers_on_l3_agent_dict.items(), key=lambda t: len(t[0])))
-    ordered_l3_agent_list = list(ordered_l3_agent_dict)
-    num_agents = len(ordered_l3_agent_list)
-    LOG.info("Agent list: %s",
-             ordered_l3_agent_list[0:(num_agents - 1 / 2) + 1])
-    i = 0
-    migrations = 0
-    errors = 0
-    for agent in ordered_l3_agent_list[0:num_agents - 1 / 2]:
-        low_agent_id = ordered_l3_agent_list[i]
-        hgh_agent_id = ordered_l3_agent_list[-(i + 1)]
+class Agent(object):
+    def __init__(self, agent_dict, routers):
+        self.agent_dict = agent_dict
+        self.routers = routers
 
-        # do nothing if we end up comparing the same router
-        if low_agent_id == hgh_agent_id:
-            continue
+    def count_routers(self):
+        return len(self.routers)
 
-        LOG.info("Examining low_agent=%s, high_agent=%s",
-                 low_agent_id, hgh_agent_id)
+    def pop_router(self):
+        return self.routers.pop()
 
-        low_agent_router_count = len(routers_on_l3_agent_dict[low_agent_id])
-        hgh_agent_router_count = len(routers_on_l3_agent_dict[hgh_agent_id])
+    def add_router(self, router):
+        self.routers.append(router)
 
-        LOG.info("Low Count=%d, High Count=%d",
-                 low_agent_router_count, hgh_agent_router_count)
 
-        for router in routers_on_l3_agent_dict[hgh_agent_id]:
-            if low_agent_router_count >= hgh_agent_router_count:
-                break
+def live_agent_list(qclient):
+    """Create an AgentList populated with the live agents of the system
 
-            if migrate_router_safely(qclient, noop, router,
-                                     l3_agent_dict[hgh_agent_id],
-                                     l3_agent_dict[low_agent_id],
-                                     wait_for_router):
-                low_agent_router_count += 1
-                hgh_agent_router_count -= 1
-                migrations += 1
-            else:
-                errors += 1
+    :param qclient: neuton client.
+    :return: an AgentList populated with the live agents listed by neutron.
+    """
+    agents = []
+    all_agents = list_agents(qclient)
+    for agent_dict in list_alive_agents(all_agents, 'L3 agent'):
+        agent_id = agent_dict['id']
+        routers = list_routers_on_l3_agent(qclient, agent_id)
+        agents.append(Agent(agent_dict, routers))
+    return AgentList(agents)
 
-        i += 1
 
-    return errors
+class RouterMover(object):
+    def __init__(self, qclient, noop, wait_for_router):
+        self.qclient = qclient
+        self.noop = noop
+        self.wait_for_router = wait_for_router
+        self.errors = 0
+
+    def move_one_router(self, source_agent, target_agent):
+        """Move one router between agents
+
+        Maintain the agent structures, and talk to neutron to do the actual
+        router migration. Also count errors.
+
+        :param source_agent: source agent
+        :param target_agent: target agent
+        :return: None
+        """
+        router_to_move = source_agent.pop_router()
+        target_agent.add_router(router_to_move)
+        migration_succeeded = migrate_router_safely(
+            self.qclient,
+            self.noop,
+            router_to_move,
+            source_agent.agent_dict,
+            target_agent.agent_dict,
+            self.wait_for_router
+        )
+        if not migration_succeeded:
+            self.errors += 1
+
+
+class AgentList(object):
+    def __init__(self, agents):
+        self.agents = agents
+
+    @property
+    def agents_sorted_by_router_count(self):
+        return sorted(self.agents, key=lambda agent: agent.count_routers())
+
+    def agent_with_least_number_of_routers(self):
+        return self.agents_sorted_by_router_count[0]
+
+    def agent_with_most_number_of_routers(self):
+        return self.agents_sorted_by_router_count[-1]
+
+    def calculate_maximal_router_count_difference(self):
+        if not self.agents:
+            return 0
+
+        return (
+            self.agent_with_most_number_of_routers().count_routers()
+            - self.agent_with_least_number_of_routers().count_routers()
+        )
 
 
 def l3_agent_check(qclient):
