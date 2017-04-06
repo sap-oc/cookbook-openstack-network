@@ -719,8 +719,8 @@ def migrate_router(qclient, router, agent, target,
         wait_router_migrated(qclient, router['id'], target['host'])
 
     if delete_namespace:
-        nscleanup = RemoteRouterNsCleanup(agent['host'], router['id'])
-        nscleanup.delete_router_namespace()
+        nscleanup = RemoteRouterNsCleanup(agent['host'])
+        nscleanup.delete_router_namespace(router['id'])
 
 
 def wait_router_migrated(qclient, router_id, target_host, maxtries=60):
@@ -1074,48 +1074,53 @@ class HostBasedAgentPicker(object):
         )
 
 
-class RemoteRouterNsCleanup(object):
-
-    def __init__(self, host, routerid):
+class RemoteNodeCleanup(object):
+    def __init__(self, host, timeout=10):
         self.target_host = host
-        self.namespace = "qrouter-" + routerid
-        self.timeout = 10
-        self.netns_del = "ip netns delete " + self.namespace
-        self.netns_pids = "ip netns pids " + self.namespace
+        self.timeout = timeout
+        self.netns_del = "ip netns delete "
+        self.netns_pids = "ip netns pids "
         self.netns_list = "ip netns list"
+
+    def _ssh_connect(self):
+        self.ssh_client = paramiko.SSHClient()
+        self.ssh_client.set_missing_host_key_policy(
+            paramiko.AutoAddPolicy())
+        self.ssh_client.load_system_host_keys()
+        self.ssh_client.connect(self.target_host, timeout=self.timeout)
 
     def _simple_ssh_command(self, command):
         # Note, that when get_pty is True, paramiko will never return anything
         # on the stderr channel, that's why we ignore it here. (stderr output
         # will endup in the stdout channel)
         _, stdout, _ = self.ssh_client.exec_command(command,
-                                                    timeout=10,
+                                                    timeout=self.timeout,
                                                     get_pty=True)
         out_lines = stdout.readlines()
         rc = stdout.channel.recv_exit_status()
         return [rc, [line.strip() for line in out_lines]]
 
-    def _namespace_exists(self):
+    def _namespace_exists(self, namespace):
         rc, out_lines = self._simple_ssh_command(self.netns_list)
-        return self.namespace in out_lines
+        return namespace in out_lines
 
-    def _get_namespace_pids(self):
-        rc, out_lines = self._simple_ssh_command(self.netns_pids)
+    def _get_namespace_pids(self, namespace):
+        rc, out_lines = self._simple_ssh_command(self.netns_pids + namespace)
         if rc:
             if out_lines and "No such file or directory" in out_lines[0]:
                 # Assume the namespace was delete meanwhile
                 return []
             else:
                 raise RuntimeError("Failed to get pids for namespace %s",
-                                   self.namespace)
+                                   namespace)
         else:
             return out_lines
 
-    def _kill_pids_in_namespace(self):
+    def _kill_pids_in_namespace(self, namespace):
         LOG.debug("Trying to terminate all processes namespace "
-                  "%s on host %s", self.namespace, self.target_host)
+                  "%s on host %s", namespace, self.target_host)
         remaining = 3
-        pids = self._get_namespace_pids()
+        pids = self._get_namespace_pids(namespace)
         while pids:
             LOG.debug("Processes still running: [%s]", ", ".join(pids))
             for pid in pids:
@@ -1136,32 +1141,34 @@ class RemoteRouterNsCleanup(object):
 
             remaining -= 1
             if remaining:
-                pids = self._get_namespace_pids()
+                pids = self._get_namespace_pids(namespace)
                 if pids:
                     LOG.debug("Some processes are still running in namespace "
-                              "%s on host %s. Retrying.", self.namespace,
+                              "%s on host %s. Retrying.", namespace,
                               self.target_host)
                     time.sleep(1)
             else:
                 break
 
-    def delete_router_namespace(self):
-        LOG.debug("Deleting namespace %s on host %s.",
-                  self.namespace,
+    def delete_remote_namespace(self, namespace):
+        LOG.debug("Deleting namespace %s on host %s.", namespace,
                   self.target_host)
-        self.ssh_client = paramiko.SSHClient()
-        self.ssh_client.set_missing_host_key_policy(
-            paramiko.AutoAddPolicy())
-        self.ssh_client.load_system_host_keys()
-        self.ssh_client.connect(self.target_host, timeout=self.timeout)
+        self._ssh_connect()
         with self.ssh_client:
             try:
-                if self._namespace_exists():
-                    self._kill_pids_in_namespace()
-                    self._simple_ssh_command(self.netns_del)
+                if self._namespace_exists(namespace):
+                    self._kill_pids_in_namespace(namespace)
+                    self._simple_ssh_command(self.netns_del + namespace)
             except socket.timeout:
                 LOG.warn("SSH timeout exceeded. Failed to delete namespace "
-                         "%s on %s", self.namespace, self.target_host)
+                         "%s on %s", namespace, self.target_host)
+
+
+class RemoteRouterNsCleanup(RemoteNodeCleanup):
+
+    def delete_router_namespace(self, router_id):
+        namespace = "qrouter-" + router_id
+        self.delete_remote_namespace(namespace)
 
 
 def term_signal_handler(signum, frame):
