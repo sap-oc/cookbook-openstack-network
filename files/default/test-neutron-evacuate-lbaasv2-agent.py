@@ -80,7 +80,3 @@ class TestEvacuateLbaasV2Agents(unittest.TestCase):
             mock_cleanup.return_value.restart_lbaasv2_agent_systemd.call_count,
             2
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

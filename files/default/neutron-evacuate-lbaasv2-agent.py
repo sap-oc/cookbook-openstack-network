@@ -38,7 +38,6 @@ except ImportError:
         '', os.path.join(dirname, '/usr/bin/neutron-ha-tool'))
 
 
-
 class EvacuateLbaasV2Agent(object):
 
     def __init__(self):
@@ -157,8 +156,7 @@ class EvacuateLbaasV2Agent(object):
                 self.reassign_loadbalancers(load_balancers, target_agents)
             )
 
-            if (cfg.CONF.source_agent_restart or
-                cfg.CONF.delete_namespaces):
+            if (cfg.CONF.source_agent_restart or cfg.CONF.delete_namespaces):
                 # Make sure the source agent is handled first
                 agents_to_restart.insert(0, self.host_to_evacuate)
 
@@ -167,15 +165,13 @@ class EvacuateLbaasV2Agent(object):
             for host in agents_to_restart:
                 LOG.info("restarting agent on %s" % host)
                 cleanup = RemoteLbaasV2Cleanup(host, timeout=30)
-                if (host != self.host_to_evacuate or
-                    cfg.CONF.source_agent_restart):
+                if (host != self.host_to_evacuate or cfg.CONF.source_agent_restart):  # noqa
                     if cfg.CONF.use_crm:
                         cleanup.restart_lbaasv2_agent_crm()
                     else:
                         cleanup.restart_lbaasv2_agent_systemd()
 
-                if (host == self.host_to_evacuate and
-                    cfg.CONF.delete_namespaces):
+                if (host == self.host_to_evacuate and cfg.CONF.delete_namespaces):  # noqa
                     cleanup.delete_lbaasv2_namespaces(load_balancers)
         else:
             LOG.info("The agent on %s is not hosting any loadbalancers.",

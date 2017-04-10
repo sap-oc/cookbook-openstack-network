@@ -3,7 +3,6 @@ import datetime
 import unittest
 import collections
 import importlib
-import logging
 import tempfile
 import mock
 import socket
@@ -518,7 +517,7 @@ class TestArgumentParsing(unittest.TestCase):
         self.assertEqual('host', params.target_host)
 
 
-def signal_tester(queue):
+def signal_harness(queue):
     import importlib
     import time
     import sys
@@ -545,7 +544,7 @@ class TestSignalHandling(unittest.TestCase):
     def test_term_signal_handling_functionality(self):
         queue = multiprocessing.Queue()
 
-        proc = multiprocessing.Process(target=signal_tester, args=(queue,))
+        proc = multiprocessing.Process(target=signal_harness, args=(queue,))
         proc.start()
         self.assertEquals('started critical block', queue.get())
         proc.terminate()
@@ -669,8 +668,3 @@ class TestAgentRebalancing(unittest.TestCase):
         self.assertEqual(
             [5], get_router_distribution(neutron_client)
         )
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    unittest.main()
