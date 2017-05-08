@@ -426,7 +426,7 @@ class AgentList(object):
 def l3_agent_check(qclient):
     """
     Walk the l3 agents searching for agents that are offline.  Show routers
-    that are offline and where we would migrate them to.
+    that are offline.
 
     :param qclient: A neutronclient
     :returns: total numbers of migrations required
@@ -448,16 +448,8 @@ def l3_agent_check(qclient):
         routers = list_routers_on_l3_agent(qclient, agent['id'])
 
         for router in routers:
-            try:
-                target = random.choice(agent_alive_list)
-            except IndexError:
-                LOG.warn("There are no l3 agents alive we could "
-                         "migrate routers onto.")
-                target = {'id': None}
-
+            LOG.warn("Would like to migrate router=%s", router['id'])
             migration_count += 1
-            LOG.warn("Would like to migrate router=%s to agent=%s",
-                     router['id'], target['id'])
 
     return migration_count
 
