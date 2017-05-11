@@ -22,6 +22,7 @@
 
 
 import argparse
+import collections
 import contextlib
 import datetime
 import logging
@@ -387,7 +388,7 @@ class RouterMover(object):
         """
         router_to_move = source_agent.pop_router()
         target_agent.add_router(router_to_move)
-        migration_succeeded = migrate_router_safely(
+        migration_result = migrate_router_safely(
             self.qclient,
             self.noop,
             router_to_move,
@@ -395,7 +396,7 @@ class RouterMover(object):
             target_agent.agent_dict,
             self.wait_for_router
         )
-        if not migration_succeeded:
+        if migration_result.failed:
             self.errors += 1
 
 
@@ -627,8 +628,10 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
     agent_picker.set_agents(targets)
     for router in routers:
         target = agent_picker.pick()
-        if migrate_router_safely(qclient, noop, router, agent,
-                                 target, wait_for_router, delete_namespace):
+        migration_result = migrate_router_safely(
+            qclient, noop, router, agent, target, wait_for_router,
+            delete_namespace)
+        if migration_result.succeeded:
             migrations += 1
         else:
             errors += 1
@@ -643,17 +646,17 @@ def migrate_router_safely(qclient, noop, router, agent, target,
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
                  "to agent=%s", router['id'], agent['id'], target['id'])
-        return True
+        return SUCCESS_MIGRATION
 
     try:
         with term_disabled():
             migrate_router(qclient, router, agent, target,
                            wait_for_router, delete_namespace)
-        return True
+        return SUCCESS_MIGRATION
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
                       "to agent=%s", router['id'], agent['id'], target['id'])
-        return False
+        return FAILED_MIGRATION
 
 
 def migrate_router(qclient, router, agent, target,
@@ -1183,6 +1186,19 @@ def term_disabled():
     SHOULD_NOT_TERMINATE = False
     if TERM_SIGNAL_RECEIVED:
         sys.exit(0)
+
+
+MigrationResult = collections.namedtuple(
+    'MigrationResult', 'succeeded failed'
+)
+
+
+def make_migration_result(succeeded=False, failed=False):
+    return MigrationResult(succeeded=succeeded, failed=failed)
+
+
+SUCCESS_MIGRATION = make_migration_result(succeeded=True)
+FAILED_MIGRATION = make_migration_result(failed=True)
 
 
 if __name__ == '__main__':
