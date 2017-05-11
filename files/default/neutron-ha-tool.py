@@ -511,7 +511,8 @@ def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
             migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
                                           agent_picker, router_filter,
                                           noop, wait_for_router,
-                                          ssh_delete_namespace, fail_fast)
+                                          ssh_delete_namespace, fail_fast,
+                                          skip_migration_for_live_agents=True)
         total_migrations += migrations
         total_errors += errors
 
@@ -615,7 +616,8 @@ def replicate_dhcp(qclient, noop=False):
 
 def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   router_filter, noop, wait_for_router,
-                                  delete_namespace, fail_fast):
+                                  delete_namespace, fail_fast,
+                                  skip_migration_for_live_agents=False):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     routers = list_routers_on_l3_agent(qclient, agent['id'])
     router_id_list = router_filter.filter_routers(
@@ -630,10 +632,10 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
         target = agent_picker.pick()
         migration_result = migrate_router_safely(
             qclient, noop, router, agent, target, wait_for_router,
-            delete_namespace)
+            delete_namespace, skip_migration_for_live_agents)
         if migration_result.succeeded:
             migrations += 1
-        else:
+        elif migration_result.failed:
             errors += 1
             if fail_fast:
                 break
@@ -642,7 +644,13 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
 
 
 def migrate_router_safely(qclient, noop, router, agent, target,
-                          wait_for_router=True, delete_namespace=False):
+                          wait_for_router=True, delete_namespace=False,
+                          skip_migration_for_live_agents=False):
+    if skip_migration_for_live_agents:
+        all_agents = list_agents(qclient)
+        live_agents = list_alive_agents(all_agents, 'L3 agent')
+        if agent['id'] in [_agent['id'] for _agent in live_agents]:
+            return SKIPPED_MIGRATION
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
                  "to agent=%s", router['id'], agent['id'], target['id'])
@@ -1189,16 +1197,17 @@ def term_disabled():
 
 
 MigrationResult = collections.namedtuple(
-    'MigrationResult', 'succeeded failed'
+    'MigrationResult', 'succeeded failed skipped'
 )
 
 
-def make_migration_result(succeeded=False, failed=False):
-    return MigrationResult(succeeded=succeeded, failed=failed)
+def make_migration_result(succeeded=False, failed=False, skipped=False):
+    return MigrationResult(succeeded=succeeded, failed=failed, skipped=skipped)
 
 
 SUCCESS_MIGRATION = make_migration_result(succeeded=True)
 FAILED_MIGRATION = make_migration_result(failed=True)
+SKIPPED_MIGRATION = make_migration_result(skipped=True)
 
 
 if __name__ == '__main__':
