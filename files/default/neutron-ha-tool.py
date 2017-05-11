@@ -639,6 +639,8 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
             errors += 1
             if fail_fast:
                 break
+        elif migration_result.skipped:
+            return (migrations, errors)
 
     return (migrations, errors)
 

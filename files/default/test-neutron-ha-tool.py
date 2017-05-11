@@ -38,8 +38,10 @@ class FakeNeutron(object):
 class FakeNeutronClient(object):
     def __init__(self, fake_neutron):
         self.fake_neutron = fake_neutron
+        self.list_agent_calls = 0
 
     def list_agents(self):
+        self.list_agent_calls += 1
         return {
             'agents': self.fake_neutron.agents.values()
         }
@@ -719,3 +721,29 @@ class TestMigrateL3RoutersFromAgent(unittest.TestCase):
 
         agent = fake_neutron.agent_by_router('router-0')
         self.assertEqual('live-agent-0', agent['id'])
+
+    def test_migrating_router_away_from_live_agent_api_queries(self):
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        fake_neutron.add_router('live-agent-0', 'router-0', {})
+        fake_neutron.add_router('live-agent-0', 'router-1', {})
+        fake_neutron.add_router('live-agent-0', 'router-2', {})
+        fake_neutron.add_router('live-agent-0', 'router-3', {})
+        fake_neutron.add_router('live-agent-0', 'router-4', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        src_agent = fake_neutron.get_agent('live-agent-0')
+        dst_agent = fake_neutron.get_agent('live-agent-1')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            src_agent,
+            [dst_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False,
+            skip_migration_for_live_agents=True
+        )
+
+        self.assertEqual(1, neutron_client.list_agent_calls)
