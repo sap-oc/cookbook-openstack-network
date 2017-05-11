@@ -31,6 +31,9 @@ class FakeNeutron(object):
 
         raise NotImplementedError()
 
+    def get_agent(self, agent_id):
+        return self.agents[agent_id]
+
 
 class FakeNeutronClient(object):
     def __init__(self, fake_neutron):
@@ -668,3 +671,26 @@ class TestAgentRebalancing(unittest.TestCase):
         self.assertEqual(
             [5], get_router_distribution(neutron_client)
         )
+
+
+class TestMigrateL3RoutersFromAgent(unittest.TestCase):
+    def test_migrating_router_away_from_dead_agent(self):
+        fake_neutron = setup_fake_neutron(live_agents=1, dead_agents=1)
+        fake_neutron.add_router('dead-agent-0', 'router-0', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        dead_agent = fake_neutron.get_agent('dead-agent-0')
+        live_agent = fake_neutron.get_agent('live-agent-0')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            dead_agent,
+            [live_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False
+        )
+
+        self.assertEqual((1, 0), (migrations, errors))
