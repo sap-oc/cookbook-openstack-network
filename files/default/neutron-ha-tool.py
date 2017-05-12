@@ -73,7 +73,7 @@ def make_argparser():
     ap.add_argument('--l3-agent-migrate', action='store_true', default=False,
                     help='Migrate routers away from offline l3 agents')
     ap.add_argument('--l3-agent-evacuate', default=None, metavar='HOST',
-                    help='Migrate routers away from a particular l3 agent')
+                    help='Migrate routers away from l3 agent living on HOST')
     ap.add_argument('--l3-agent-rebalance', action='store_true', default=False,
                     help='Rebalance router count on all l3 agents')
     ap.add_argument('--replicate-dhcp', action='store_true', default=False,
