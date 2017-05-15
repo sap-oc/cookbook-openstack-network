@@ -640,6 +640,10 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
             if fail_fast:
                 break
         elif migration_result.skipped:
+            LOG.info(
+                "Migration of router %s was skipped, no more routers will be "
+                "moved away from agent %s", router['id'], agent['id']
+            )
             return (migrations, errors)
 
     return (migrations, errors)
@@ -652,6 +656,10 @@ def migrate_router_safely(qclient, noop, router, agent, target,
         all_agents = list_agents(qclient)
         live_agents = list_alive_agents(all_agents, 'L3 agent')
         if agent['id'] in [_agent['id'] for _agent in live_agents]:
+            LOG.info(
+                "Agent %s is online, not migrating router %s",
+                agent['id'], router['id']
+            )
             return SKIPPED_MIGRATION
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
