@@ -22,6 +22,7 @@
 
 
 import argparse
+import collections
 import contextlib
 import datetime
 import logging
@@ -387,7 +388,7 @@ class RouterMover(object):
         """
         router_to_move = source_agent.pop_router()
         target_agent.add_router(router_to_move)
-        migration_succeeded = migrate_router_safely(
+        migration_result = migrate_router_safely(
             self.qclient,
             self.noop,
             router_to_move,
@@ -395,7 +396,7 @@ class RouterMover(object):
             target_agent.agent_dict,
             self.wait_for_router
         )
-        if not migration_succeeded:
+        if migration_result.failed:
             self.errors += 1
 
 
@@ -426,7 +427,7 @@ class AgentList(object):
 def l3_agent_check(qclient):
     """
     Walk the l3 agents searching for agents that are offline.  Show routers
-    that are offline and where we would migrate them to.
+    that are offline.
 
     :param qclient: A neutronclient
     :returns: total numbers of migrations required
@@ -448,16 +449,8 @@ def l3_agent_check(qclient):
         routers = list_routers_on_l3_agent(qclient, agent['id'])
 
         for router in routers:
-            try:
-                target = random.choice(agent_alive_list)
-            except IndexError:
-                LOG.warn("There are no l3 agents alive we could "
-                         "migrate routers onto.")
-                target = {'id': None}
-
+            LOG.warn("Would like to migrate router=%s", router['id'])
             migration_count += 1
-            LOG.warn("Would like to migrate router=%s to agent=%s",
-                     router['id'], target['id'])
 
     return migration_count
 
@@ -518,7 +511,8 @@ def l3_agent_migrate(qclient, agent_picker, router_filter, noop=False,
             migrate_l3_routers_from_agent(qclient, agent, agent_alive_list,
                                           agent_picker, router_filter,
                                           noop, wait_for_router,
-                                          ssh_delete_namespace, fail_fast)
+                                          ssh_delete_namespace, fail_fast,
+                                          skip_migration_for_live_agents=True)
         total_migrations += migrations
         total_errors += errors
 
@@ -622,7 +616,8 @@ def replicate_dhcp(qclient, noop=False):
 
 def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
                                   router_filter, noop, wait_for_router,
-                                  delete_namespace, fail_fast):
+                                  delete_namespace, fail_fast,
+                                  skip_migration_for_live_agents=False):
     LOG.info("Querying agent_id=%s for routers to migrate away", agent['id'])
     routers = list_routers_on_l3_agent(qclient, agent['id'])
     router_id_list = router_filter.filter_routers(
@@ -635,33 +630,51 @@ def migrate_l3_routers_from_agent(qclient, agent, targets, agent_picker,
     agent_picker.set_agents(targets)
     for router in routers:
         target = agent_picker.pick()
-        if migrate_router_safely(qclient, noop, router, agent,
-                                 target, wait_for_router, delete_namespace):
+        migration_result = migrate_router_safely(
+            qclient, noop, router, agent, target, wait_for_router,
+            delete_namespace, skip_migration_for_live_agents)
+        if migration_result.succeeded:
             migrations += 1
-        else:
+        elif migration_result.failed:
             errors += 1
             if fail_fast:
                 break
+        elif migration_result.skipped:
+            LOG.info(
+                "Migration of router %s was skipped, no more routers will be "
+                "moved away from agent %s", router['id'], agent['id']
+            )
+            return (migrations, errors)
 
     return (migrations, errors)
 
 
 def migrate_router_safely(qclient, noop, router, agent, target,
-                          wait_for_router=True, delete_namespace=False):
+                          wait_for_router=True, delete_namespace=False,
+                          skip_migration_for_live_agents=False):
+    if skip_migration_for_live_agents:
+        all_agents = list_agents(qclient)
+        live_agents = list_alive_agents(all_agents, 'L3 agent')
+        if agent['id'] in [_agent['id'] for _agent in live_agents]:
+            LOG.info(
+                "Agent %s is online, not migrating router %s",
+                agent['id'], router['id']
+            )
+            return SKIPPED_MIGRATION
     if noop:
         LOG.info("Would try to migrate router=%s from agent=%s "
                  "to agent=%s", router['id'], agent['id'], target['id'])
-        return True
+        return SUCCESS_MIGRATION
 
     try:
         with term_disabled():
             migrate_router(qclient, router, agent, target,
                            wait_for_router, delete_namespace)
-        return True
+        return SUCCESS_MIGRATION
     except:
         LOG.exception("Failed to migrate router=%s from agent=%s "
                       "to agent=%s", router['id'], agent['id'], target['id'])
-        return False
+        return FAILED_MIGRATION
 
 
 def migrate_router(qclient, router, agent, target,
@@ -1191,6 +1204,20 @@ def term_disabled():
     SHOULD_NOT_TERMINATE = False
     if TERM_SIGNAL_RECEIVED:
         sys.exit(0)
+
+
+MigrationResult = collections.namedtuple(
+    'MigrationResult', 'succeeded failed skipped'
+)
+
+
+def make_migration_result(succeeded=False, failed=False, skipped=False):
+    return MigrationResult(succeeded=succeeded, failed=failed, skipped=skipped)
+
+
+SUCCESS_MIGRATION = make_migration_result(succeeded=True)
+FAILED_MIGRATION = make_migration_result(failed=True)
+SKIPPED_MIGRATION = make_migration_result(skipped=True)
 
 
 if __name__ == '__main__':

@@ -3,7 +3,6 @@ import datetime
 import unittest
 import collections
 import importlib
-import logging
 import tempfile
 import mock
 import socket
@@ -32,12 +31,17 @@ class FakeNeutron(object):
 
         raise NotImplementedError()
 
+    def get_agent(self, agent_id):
+        return self.agents[agent_id]
+
 
 class FakeNeutronClient(object):
     def __init__(self, fake_neutron):
         self.fake_neutron = fake_neutron
+        self.list_agent_calls = 0
 
     def list_agents(self):
+        self.list_agent_calls += 1
         return {
             'agents': self.fake_neutron.agents.values()
         }
@@ -518,7 +522,7 @@ class TestArgumentParsing(unittest.TestCase):
         self.assertEqual('host', params.target_host)
 
 
-def signal_tester(queue):
+def signal_harness(queue):
     import importlib
     import time
     import sys
@@ -545,7 +549,7 @@ class TestSignalHandling(unittest.TestCase):
     def test_term_signal_handling_functionality(self):
         queue = multiprocessing.Queue()
 
-        proc = multiprocessing.Process(target=signal_tester, args=(queue,))
+        proc = multiprocessing.Process(target=signal_harness, args=(queue,))
         proc.start()
         self.assertEquals('started critical block', queue.get())
         proc.terminate()
@@ -671,6 +675,75 @@ class TestAgentRebalancing(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    unittest.main()
+class TestMigrateL3RoutersFromAgent(unittest.TestCase):
+    def test_migrating_router_away_from_dead_agent(self):
+        fake_neutron = setup_fake_neutron(live_agents=1, dead_agents=1)
+        fake_neutron.add_router('dead-agent-0', 'router-0', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        dead_agent = fake_neutron.get_agent('dead-agent-0')
+        live_agent = fake_neutron.get_agent('live-agent-0')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            dead_agent,
+            [live_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False
+        )
+
+        self.assertEqual((1, 0), (migrations, errors))
+
+    def test_migrating_router_away_from_live_agent_does_no_move(self):
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        fake_neutron.add_router('live-agent-0', 'router-0', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        src_agent = fake_neutron.get_agent('live-agent-0')
+        dst_agent = fake_neutron.get_agent('live-agent-1')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            src_agent,
+            [dst_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False,
+            skip_migration_for_live_agents=True
+        )
+
+        self.assertEqual((0, 0), (migrations, errors))
+
+        agent = fake_neutron.agent_by_router('router-0')
+        self.assertEqual('live-agent-0', agent['id'])
+
+    def test_migrating_router_away_from_live_agent_api_queries(self):
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        fake_neutron.add_router('live-agent-0', 'router-0', {})
+        fake_neutron.add_router('live-agent-0', 'router-1', {})
+        fake_neutron.add_router('live-agent-0', 'router-2', {})
+        fake_neutron.add_router('live-agent-0', 'router-3', {})
+        fake_neutron.add_router('live-agent-0', 'router-4', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        src_agent = fake_neutron.get_agent('live-agent-0')
+        dst_agent = fake_neutron.get_agent('live-agent-1')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            src_agent,
+            [dst_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False,
+            skip_migration_for_live_agents=True
+        )
+
+        self.assertEqual(1, neutron_client.list_agent_calls)
