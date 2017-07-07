@@ -3,10 +3,10 @@ import datetime
 import unittest
 import collections
 import importlib
-import logging
 import tempfile
 import mock
 import socket
+import multiprocessing
 
 ha_tool = importlib.import_module("neutron-ha-tool")
 
@@ -31,12 +31,17 @@ class FakeNeutron(object):
 
         raise NotImplementedError()
 
+    def get_agent(self, agent_id):
+        return self.agents[agent_id]
+
 
 class FakeNeutronClient(object):
     def __init__(self, fake_neutron):
         self.fake_neutron = fake_neutron
+        self.list_agent_calls = 0
 
     def list_agents(self):
+        self.list_agent_calls += 1
         return {
             'agents': self.fake_neutron.agents.values()
         }
@@ -151,8 +156,8 @@ class TestL3AgentEvacuate(unittest.TestCase):
     def test_evacuate_without_agents_returns_no_errors(self):
         neutron_client = FakeNeutronClient(FakeNeutron())
 
-        # None as Agent Picker - given no agents, no migration, and therefore no
-        # agent picking will take place
+        # None as Agent Picker - given no agents, no migration, and therefore
+        # no agent picking will take place
         error_count = ha_tool.l3_agent_evacuate(
             neutron_client, 'host1', None, ha_tool.NullRouterFilter()
         )
@@ -174,6 +179,22 @@ class TestL3AgentEvacuate(unittest.TestCase):
             set(['router']),
             fake_neutron.routers_by_agent['live-agent-1']
         )
+
+    @mock.patch('neutron-ha-tool.wait_router_migrated')
+    def test_evacuate_fast_fail_return_exactly_one_error(self,
+                                                         mock_wait_router):
+        mock_wait_router.side_effect = RuntimeError("Failure")
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        neutron_client = FakeNeutronClient(fake_neutron)
+        fake_neutron.add_router('live-agent-0', 'router1', {})
+        fake_neutron.add_router('live-agent-0', 'router2', {})
+
+        error_count = ha_tool.l3_agent_evacuate(
+            neutron_client, 'live-agent-0-host', ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(), fail_fast=True
+        )
+
+        self.assertEqual(1, error_count)
 
 
 class TestLeastBusyAgentPicker(unittest.TestCase):
@@ -210,7 +231,7 @@ class TestLeastBusyAgentPicker(unittest.TestCase):
 
         self.assertEqual('live-agent-1', picker.pick()['id'])
 
-    def test_picking_an_agent_increases_internal_router_counter_per_agent(self):
+    def test_picking_an_agent_increases_internal_router_counter(self):
         self.fake_neutron.add_router('live-agent-0', 'router', {})
         picker = self.make_picker_and_set_agents()
 
@@ -344,8 +365,8 @@ class TestSshDeleteRouterNamespace(unittest.TestCase):
             return [mock.MagicMock, mock_stdout, mock.MagicMock]
 
         mock_ssh.return_value.exec_command.side_effect = ssh_exec_side_effect
-        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1", "routerid1")
-        ns_cleanup.delete_router_namespace()
+        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1")
+        ns_cleanup.delete_router_namespace("routerid1")
         expected_calls = [
             mock.call("ip netns list", get_pty=mock.ANY, timeout=mock.ANY),
             mock.call("ip netns pids qrouter-routerid1", get_pty=mock.ANY,
@@ -371,10 +392,10 @@ class TestSshDeleteRouterNamespace(unittest.TestCase):
                 mock_stdout.readlines.return_value = ["qrouter-otherid\r\n"]
             return [mock.MagicMock(), mock_stdout, mock.MagicMock()]
 
-        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1", "routerid1")
+        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1")
         mock_ssh.return_value.exec_command.side_effect = \
             side_effect_namespace_absent
-        ns_cleanup.delete_router_namespace()
+        ns_cleanup.delete_router_namespace("routerid1")
         mock_ssh.return_value.exec_command.assert_called_once_with(
             "ip netns list", timeout=mock.ANY, get_pty=mock.ANY)
 
@@ -385,8 +406,8 @@ class TestSshDeleteRouterNamespace(unittest.TestCase):
 
         mock_ssh.return_value.exec_command.side_effect = \
             side_effect_ssh_connect
-        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1", "routerid1")
-        ns_cleanup.delete_router_namespace()
+        ns_cleanup = ha_tool.RemoteRouterNsCleanup("host1")
+        ns_cleanup.delete_router_namespace("routerid1")
 
 
 class TestAgentIdBasedAgentPicker(unittest.TestCase):
@@ -437,7 +458,6 @@ class TestHostBasedAgentPicker(unittest.TestCase):
 
         self.assertEqual('host-0', picked_agent['host'])
 
-
     def test_agent_not_found_by_host_id_raises_index_error(self):
         picker = self.make_picker('invalid')
 
@@ -474,7 +494,8 @@ class TestArgumentParsing(unittest.TestCase):
                 router_list_file=None,
                 target_agent_id=None,
                 target_host=None,
-                wait_for_router=True
+                wait_for_router=True,
+                fail_fast=False
             ),
             params
         )
@@ -482,7 +503,7 @@ class TestArgumentParsing(unittest.TestCase):
     def test_target_agent_id_and_target_host_are_mutually_exclusive(self):
         argparser = ha_tool.make_argparser()
 
-        with self.assertRaises(SystemExit) as excinfo:
+        with self.assertRaises(SystemExit):
             argparser.parse_args(
                 ['--target-host', 'host', '--target-agent-id', 'agent-id'])
 
@@ -501,6 +522,228 @@ class TestArgumentParsing(unittest.TestCase):
         self.assertEqual('host', params.target_host)
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    unittest.main()
+def signal_harness(queue):
+    import importlib
+    import time
+    import sys
+
+    ha_tool = importlib.import_module("neutron-ha-tool")
+    ha_tool.register_term_signal_handler()
+
+    with ha_tool.term_disabled():
+        queue.put('started critical block')
+        time.sleep(100)
+        queue.put('about to exit critical block')
+
+    time.sleep(100)
+    sys.exit(1)
+
+
+class TestSignalHandling(unittest.TestCase):
+
+    def wait_for_subprocess_to_write(self, subproc, text):
+        data = subproc.stdout.read(len(text))
+
+        self.assertEqual(text, data)
+
+    def test_term_signal_handling_functionality(self):
+        queue = multiprocessing.Queue()
+
+        proc = multiprocessing.Process(target=signal_harness, args=(queue,))
+        proc.start()
+        self.assertEquals('started critical block', queue.get())
+        proc.terminate()
+        self.assertEquals('about to exit critical block', queue.get())
+        proc.join()
+
+        self.assertEqual(0, proc.exitcode)
+
+
+class SignalHandlerTest(unittest.TestCase):
+    def setUp(self):
+        self._globals = (
+            ha_tool.SHOULD_NOT_TERMINATE, ha_tool.TERM_SIGNAL_RECEIVED
+        )
+
+    def tearDown(self):
+        ha_tool.SHOULD_NOT_TERMINATE, ha_tool.TERM_SIGNAL_RECEIVED = (
+            self._globals
+        )
+
+
+class TestSignalHandler(SignalHandlerTest):
+    def test_exits_with_zero(self):
+        with self.assertRaises(SystemExit) as ctx:
+            ha_tool.term_signal_handler(None, None)
+
+        self.assertEqual(0, ctx.exception.code)
+
+    def test_sets_global_variable(self):
+        with self.assertRaises(SystemExit):
+            ha_tool.term_signal_handler(None, None)
+
+        self.assertTrue(ha_tool.TERM_SIGNAL_RECEIVED)
+
+    def test_does_not_quit_when_global_set(self):
+        ha_tool.SHOULD_NOT_TERMINATE = True
+
+        ha_tool.term_signal_handler(None, None)
+
+        self.assertTrue(ha_tool.TERM_SIGNAL_RECEIVED)
+
+
+class TestTermDisabled(SignalHandlerTest):
+    def test_disables_global_flag(self):
+        with ha_tool.term_disabled():
+            self.assertTrue(ha_tool.SHOULD_NOT_TERMINATE)
+
+    def test_exits_if_global_flag_set_while_in_context(self):
+        with self.assertRaises(SystemExit) as ctx:
+            with ha_tool.term_disabled():
+                ha_tool.TERM_SIGNAL_RECEIVED = True
+
+        self.assertEqual(0, ctx.exception.code)
+
+    def test_term_can_be_handled_after_context(self):
+        with ha_tool.term_disabled():
+            pass
+
+        self.assertFalse(ha_tool.SHOULD_NOT_TERMINATE)
+
+
+def get_router_distribution(neutron_client):
+    agents = neutron_client.list_agents()['agents']
+    agent_ids = sorted([agent['id'] for agent in agents])
+    return [
+        len(neutron_client.list_routers_on_l3_agent(agent_id)['routers'])
+        for agent_id in agent_ids
+    ]
+
+
+def fake_neutron_with_distribution(router_distribution):
+    fake_neutron = setup_fake_neutron(live_agents=len(router_distribution))
+    router_id = 0
+    for agent_serial, num_routers in enumerate(router_distribution):
+        agent_id = 'live-agent-{}'.format(agent_serial)
+        for i in range(num_routers):
+            fake_neutron.add_router(
+                agent_id, 'router-{}'.format(router_id), {}
+            )
+            router_id += 1
+    return fake_neutron
+
+
+class TestAgentRebalancing(unittest.TestCase):
+    def test_balancing_scenario(self):
+        fake_neutron = fake_neutron_with_distribution([66, 67, 67, 64, 0])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [53, 53, 53, 53, 52], get_router_distribution(neutron_client)
+        )
+
+    def test_no_agents_in_the_system(self):
+        fake_neutron = fake_neutron_with_distribution([])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [], get_router_distribution(neutron_client)
+        )
+
+    def test_already_balanced_system_is_not_touched(self):
+        fake_neutron = fake_neutron_with_distribution([5, 4, 5, 4, 5])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [5, 4, 5, 4, 5], get_router_distribution(neutron_client)
+        )
+
+    def test_only_one_agent_exists(self):
+        fake_neutron = fake_neutron_with_distribution([5])
+        neutron_client = FakeNeutronClient(fake_neutron)
+
+        ha_tool.l3_agent_rebalance(neutron_client)
+
+        self.assertEqual(
+            [5], get_router_distribution(neutron_client)
+        )
+
+
+class TestMigrateL3RoutersFromAgent(unittest.TestCase):
+    def test_migrating_router_away_from_dead_agent(self):
+        fake_neutron = setup_fake_neutron(live_agents=1, dead_agents=1)
+        fake_neutron.add_router('dead-agent-0', 'router-0', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        dead_agent = fake_neutron.get_agent('dead-agent-0')
+        live_agent = fake_neutron.get_agent('live-agent-0')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            dead_agent,
+            [live_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False
+        )
+
+        self.assertEqual((1, 0), (migrations, errors))
+
+    def test_migrating_router_away_from_live_agent_does_no_move(self):
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        fake_neutron.add_router('live-agent-0', 'router-0', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        src_agent = fake_neutron.get_agent('live-agent-0')
+        dst_agent = fake_neutron.get_agent('live-agent-1')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            src_agent,
+            [dst_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False,
+            skip_migration_for_live_agents=True
+        )
+
+        self.assertEqual((0, 0), (migrations, errors))
+
+        agent = fake_neutron.agent_by_router('router-0')
+        self.assertEqual('live-agent-0', agent['id'])
+
+    def test_migrating_router_away_from_live_agent_api_queries(self):
+        fake_neutron = setup_fake_neutron(live_agents=2)
+        fake_neutron.add_router('live-agent-0', 'router-0', {})
+        fake_neutron.add_router('live-agent-0', 'router-1', {})
+        fake_neutron.add_router('live-agent-0', 'router-2', {})
+        fake_neutron.add_router('live-agent-0', 'router-3', {})
+        fake_neutron.add_router('live-agent-0', 'router-4', {})
+        neutron_client = FakeNeutronClient(fake_neutron)
+        src_agent = fake_neutron.get_agent('live-agent-0')
+        dst_agent = fake_neutron.get_agent('live-agent-1')
+
+        (migrations, errors) = ha_tool.migrate_l3_routers_from_agent(
+            neutron_client,
+            src_agent,
+            [dst_agent],
+            ha_tool.RandomAgentPicker(),
+            ha_tool.NullRouterFilter(),
+            False,
+            False,
+            False,
+            False,
+            skip_migration_for_live_agents=True
+        )
+
+        self.assertEqual(1, neutron_client.list_agent_calls)
